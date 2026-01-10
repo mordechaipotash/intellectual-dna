@@ -205,7 +205,17 @@ This README is part of that.
 
 ---
 
-*Built 2023-2026 by Mordechai*
+## Work With Me
+
+Open to async contract work:
+
+- Context engineering & CLAUDE.md architecture
+- MCP server development
+- AI orchestration systems
+
+Reach out: [GitHub](https://github.com/mordechaipotash) · [Reddit](https://reddit.com/u/Signal_Usual8630)
+
+---
 
 ## Related Projects
 
