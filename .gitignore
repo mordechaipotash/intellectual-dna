@@ -1,0 +1,36 @@
+# Ignore everything by default
+*
+
+# Then whitelist what we want
+!.gitignore
+!README.md
+!config.py
+
+# Pipeline code
+!pipelines/
+!pipelines/**/*.py
+
+# Live automation
+!live/
+!live/*.py
+!live/*.sh
+
+# MCP server
+!mordelab/
+!mordelab/02-monotropic-prosthetic/
+!mordelab/02-monotropic-prosthetic/mcp_brain_server.py
+!mordelab/02-monotropic-prosthetic/SEED-MORDETROPIC-128KB-MASTER.json
+
+# Claude config (shows how you work)
+!.claude/
+!.claude/CLAUDE.md
+
+# But still exclude these even if whitelisted above
+*.pyc
+__pycache__/
+*.env
+.DS_Store
+*.duckdb
+*.parquet
+*.lance
+mcp-env/
