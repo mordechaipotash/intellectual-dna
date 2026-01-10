@@ -28,7 +28,7 @@ Not a note-taking app. A queryable memory that finds patterns I'd never think to
 |------|-------|
 | Conversation messages | 353,216 |
 | Embedded vectors | 106,000 |
-| YouTube videos tracked | 31,832 |
+| YouTube videos tracked | 32,000 |
 | GitHub commits indexed | 1,427 |
 | Google searches captured | 52,791 |
 | Query time (semantic) | 256ms |
@@ -206,3 +206,13 @@ This README is part of that.
 ---
 
 *Built 2023-2026 by Mordechai*
+
+## Related Projects
+
+- [youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline) - 32K+ videos, 41.8M words transcribed
+- [python-data-engineering-portfolio](https://github.com/mordechaipotash/python-data-engineering-portfolio) - 1,059 production scripts
+- [seedgarden](https://github.com/mordechaipotash/seedgarden) - The SHELET Protocol for AI-human interfaces
+
+---
+
+*Built by [Mordechai Potash](https://github.com/mordechaipotash)*
