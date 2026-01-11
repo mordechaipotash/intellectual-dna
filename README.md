@@ -219,6 +219,7 @@ Reach out: [GitHub](https://github.com/mordechaipotash) · [Reddit](https://redd
 
 ## Related Projects
 
+- [brain-canvas](https://github.com/mordechaipotash/brain-canvas) - Give any LLM its own display (`npx brain-canvas`)
 - [youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline) - 32K+ videos, 41.8M words transcribed
 - [python-data-engineering-portfolio](https://github.com/mordechaipotash/python-data-engineering-portfolio) - 1,059 production scripts
 - [seedgarden](https://github.com/mordechaipotash/seedgarden) - The SHELET Protocol for AI-human interfaces
