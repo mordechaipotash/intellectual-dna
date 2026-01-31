@@ -5,7 +5,7 @@
 
 ## Project Overview
 AI-powered knowledge system for querying Mordechai's intellectual patterns from:
-- **353K conversation messages** (2023-01 to 2026-01) in DuckDB/Parquet
+- **359K conversation messages** (2023-01 to 2026-01) in DuckDB/Parquet
 - **106K embedded messages** with vector search (256ms queries, HNSW-indexed)
 - **8 SEED principles** (foundational mental models)
 
@@ -57,7 +57,7 @@ Progressive disclosure from pointers → full content:
 │   ├── embed_messages.py                    # Embedding pipeline
 │   └── utils/                               # Shared utilities
 ├── mordelab/02-monotropic-prosthetic/       # MCP server
-│   ├── mcp_brain_server.py                  # MCP server (30+ tools)
+│   ├── mcp_brain_server.py                  # MCP server (37 active, 55 deprecated)
 │   ├── embeddings.duckdb                    # Vector embeddings (14GB, HNSW-indexed)
 │   ├── SEED-MORDETROPIC-128KB-MASTER.json   # 8 principles (active)
 │   └── mcp-env/                             # Python venv for MCP
@@ -195,6 +195,157 @@ get_principle('compression')  # Deep dive into one
 | Tool | Purpose |
 |------|---------|
 | `query_intellectual_evolution(limit)` | 11 quarter comparisons with evolved beliefs, new frameworks, pivotal insights |
+
+### 14. Phase 1 55x Mining Tools (NEW 2026-01-11)
+*Surfaces 8 hidden interpretation layers that were computed but never exposed*
+
+| Tool | Purpose | Rows |
+|------|---------|------|
+| `query_conversation_titles(month, limit)` | Meta-level naming of conversations | 957 titles |
+| `query_weekly_expertise(month, limit)` | Technical domains focused on each week | 153 weeks |
+| `query_tool_preferences(month, limit)` | Which tools/stacks preferred each month | 36 months |
+| `query_tool_combos(limit)` | Tool stack combinations used together | 5 records |
+| `query_problem_chains(month, limit)` | Weekly debugging patterns and solutions | 155 weeks |
+| `query_intellectual_themes(theme)` | Auto-discovered document clusters | 8 themes |
+| `query_youtube_links(month, limit)` | How videos connect to your work | 101 links |
+
+### 15. Phase 2 Spend Mining Tools (NEW 2026-01-11)
+*Extracts insights from 732K OpenRouter API calls ($898 total spend, 1.47B tokens)*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_model_efficiency(top_n, sort_by)` | Model ROI - cost per million tokens | 116 models |
+| `query_provider_performance(month)` | Provider comparison (Together, DeepInfra, Novita) | 42 providers |
+| `query_spend_temporal(month, view)` | Usage patterns by day/month/dow | 307 days |
+| `query_spend_summary()` | Comprehensive spend overview | All data |
+
+**Usage examples**:
+```python
+query_model_efficiency(top_n=10, sort_by='efficiency')  # Most cost-effective models
+query_provider_performance('2025-06')  # June 2025 providers
+query_spend_temporal(view='dow')  # Day of week patterns
+query_spend_summary()  # Full overview
+```
+
+### 16. Phase 3 Conversation Analysis Tools (NEW 2026-01-11)
+*Extracts patterns from 353K messages, 15K conversations, 154K threaded messages*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_conversation_stats(top_n, sort_by)` | Per-conversation metrics | 15,210 conversations |
+| `query_deep_conversations(min_messages, limit)` | Long sustained discussions (100+ msgs) | 581 deep convos |
+| `query_question_patterns(month)` | Q&A type analysis (how-to, debug, etc) | 11,989 questions |
+| `query_correction_patterns(month)` | When you correct AI ("no no no", etc) | 1,877 corrections |
+| `query_conversation_summary()` | Comprehensive conversation overview | All data |
+
+**Usage examples**:
+```python
+query_conversation_stats(sort_by='questions')  # Most question-heavy convos
+query_deep_conversations(min_messages=200)  # Really long conversations
+query_question_patterns('2025-06')  # June 2025 question types
+query_correction_patterns()  # All-time correction analysis
+```
+
+### 17. Phase 4 Behavioral Archaeology Tools (NEW 2026-01-11)
+*Mines 112K Google searches/visits for behavioral patterns (2011-2025)*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_search_patterns(month, intent)` | Search intent categorization | 52,791 searches |
+| `query_browsing_patterns(category)` | Website visit analysis | 58,650 visits |
+| `query_research_velocity(month)` | Research intensity tracking | 283 deep dive days |
+| `query_curiosity_terms(month, limit)` | Top search topics | 2,173 terms |
+| `query_behavioral_summary()` | Comprehensive overview | All data |
+
+**Usage examples**:
+```python
+query_search_patterns(intent='debugging')  # Show debugging searches
+query_browsing_patterns(category='github')  # GitHub visit analysis
+query_research_velocity()  # Research intensity overview
+query_curiosity_terms(month='2024-06')  # June 2024 search terms
+```
+
+### 18. Phase 5 Code Productivity Tools (NEW 2026-01-11)
+*Mines 1.4K commits across 132 repos for productivity patterns*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_code_velocity(month, view)` | Commit velocity (daily/weekly/monthly) | 186 days tracked |
+| `query_repo_stats(active_only, limit)` | Repository statistics | 121 active repos |
+| `query_language_stats()` | Programming language distribution | 6 languages |
+| `query_commit_patterns(commit_type)` | Commit message patterns | 10 types |
+| `query_high_productivity_days(limit)` | Days with 5+ commits | 79 days |
+| `query_code_summary()` | Comprehensive code overview | All data |
+
+**Usage examples**:
+```python
+query_code_velocity(view='monthly')  # Monthly commit patterns
+query_repo_stats(limit=10)  # Top 10 repos
+query_commit_patterns(commit_type='fix')  # Show fix commits
+query_high_productivity_days()  # Most productive days
+```
+
+### 19. Phase 6 Markdown Knowledge Tools (NEW 2026-01-11)
+*Surfaces 5.5K markdown documents (6.3M words) from knowledge base*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_markdown_stats(limit)` | Document-level statistics | 5,524 docs |
+| `query_markdown_categories(limit)` | Category analysis | 28 categories |
+| `query_markdown_projects(limit)` | Project clustering | 50+ projects |
+| `query_curated_docs(doc_type, limit)` | TOP_TIER_IP + DEEP_DOCS | 701 curated docs |
+| `query_markdown_summary()` | Comprehensive markdown overview | All layers |
+
+**Usage examples**:
+```python
+query_markdown_stats(limit=20)  # Top 20 documents by word count
+query_markdown_categories()  # All 28 categories
+query_markdown_projects(limit=10)  # Top 10 projects
+query_curated_docs(doc_type='top_tier')  # 440 TOP_TIER_IP docs
+query_curated_docs(doc_type='deep')  # 261 DEEP_DOCS
+query_markdown_summary()  # Full overview
+```
+
+### 20. Phase 7 Cross-Dimensional Synthesis Tools (NEW 2026-01-11)
+*Connects ALL data sources: accomplishments × mood × commits × spend × research*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_productivity_matrix(month, view, top_n)` | Daily/weekly/monthly productivity scores | 2,793 days |
+| `query_learning_arcs(month, topic, limit)` | Learning velocity: Search→Watch→Discuss→Build | 125 months |
+| `query_project_success(category, limit)` | Project outcome prediction | 185 projects |
+| `query_unified_timeline(year, limit)` | Cross-source unified timeline | 125 months |
+| `query_cross_dimensional_summary()` | Comprehensive synthesis overview | All layers |
+
+**Usage examples**:
+```python
+query_productivity_matrix(view='peak')  # Peak productivity days
+query_productivity_matrix(view='monthly')  # Monthly productivity
+query_learning_arcs(topic='python')  # Python learning arc
+query_project_success(category='shipped')  # Shipped projects only
+query_unified_timeline(year='2025')  # 2025 timeline
+query_cross_dimensional_summary()  # Full synthesis overview
+```
+
+### 21. Phase 9 Discovery Pipeline Tools (NEW 2026-01-11)
+*Automated insight generation: anomalies, trends, recommendations*
+
+| Tool | Purpose | Data |
+|------|---------|------|
+| `query_anomalies(anomaly_type, limit)` | Spending spikes, productivity outliers | 14 spikes, 187 outliers |
+| `query_trends(trend_type, limit)` | Rising/declining concepts | 49 rising, 262 declining |
+| `query_recommendations(rec_type, limit)` | Dormant topics, stalled projects | 629 dormant topics |
+| `query_weekly_synthesis(weeks)` | Auto-generated weekly reports | 470 weeks |
+| `query_discovery_summary()` | Full discovery insights overview | All layers |
+
+**Usage examples**:
+```python
+query_anomalies(anomaly_type='spending')  # Spending spikes only
+query_trends(trend_type='rising')  # Rising concepts
+query_recommendations(rec_type='dormant')  # Dormant topics to revisit
+query_weekly_synthesis(weeks=5)  # Last 5 weeks
+query_discovery_summary()  # Full overview
+```
 
 ### ⚠️ Archived KG Tools
 These now return "KG Archived" message with alternatives:
@@ -430,4 +581,5 @@ base = Path.home() / "intellectual_dna"
 5. **YouTube tools**: Search what Mordechai consumed, not just what he said
 6. **GitHub tools**: Cross-reference code projects with conversation context
 7. **V2 interpretations**: `query_focus()`, mvp_velocity, tool_stacks, problem_resolution
-8. **Restart Claude Code** after MCP server changes to pick up new tools
+8. **Phase 1 55x tools**: `query_intellectual_themes()`, `query_problem_chains()`, `query_weekly_expertise()` - surfaces hidden interpretation layers
+9. **Restart Claude Code** after MCP server changes to pick up new tools

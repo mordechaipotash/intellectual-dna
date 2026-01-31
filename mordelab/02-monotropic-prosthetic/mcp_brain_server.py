@@ -142,6 +142,43 @@ def get_lance_db():
     return _lance_db
 
 
+def lance_search(embedding, table: str = "message", limit: int = 10, min_sim: float = 0.0):
+    """Search LanceDB with embedding vector.
+    Returns list of (conversation_title, content, year, month, similarity) tuples."""
+    db = get_lance_db()
+    if not db:
+        return []
+    try:
+        tbl = db.open_table(table)
+        results = tbl.search(embedding).limit(limit).to_pandas()
+        # Convert distance to similarity (LanceDB returns L2 distance)
+        output = []
+        for _, row in results.iterrows():
+            sim = 1 / (1 + row.get('_distance', 0))  # Convert distance to similarity
+            if sim >= min_sim:
+                output.append((
+                    row.get('conversation_title', 'Untitled'),
+                    row.get('content', ''),
+                    row.get('year', 0),
+                    row.get('month', 0),
+                    sim
+                ))
+        return output
+    except Exception:
+        return []
+
+
+def lance_count(table: str = "message") -> int:
+    """Get row count from LanceDB table."""
+    db = get_lance_db()
+    if not db:
+        return 0
+    try:
+        return db.open_table(table).count_rows()
+    except:
+        return 0
+
+
 def get_github_db():
     """Get cached DuckDB connection for GitHub data."""
     global _github_db
@@ -414,12 +451,13 @@ def brain_stats(source: str = "all") -> str:
         except:
             output.append("**Conversations**: unavailable")
 
-        # Embeddings
+        # Embeddings (LanceDB)
         try:
-            edb = get_embeddings_db()
-            if edb:
-                embedded = edb.execute("SELECT COUNT(*) FROM message_embeddings").fetchone()[0]
-                output.append(f"**Embeddings**: {embedded:,} vectors (768d)")
+            embedded = lance_count("message")
+            if embedded:
+                output.append(f"**Embeddings**: {embedded:,} vectors (768d, LanceDB)")
+            else:
+                output.append("**Embeddings**: unavailable")
         except:
             output.append("**Embeddings**: unavailable")
 
@@ -750,29 +788,16 @@ def what_do_i_think(topic: str) -> str:
     """
     output = [f"## What do I think about: {topic}\n"]
 
-    # 1. SEMANTIC SEARCH (conceptually related)
+    # 1. SEMANTIC SEARCH (conceptually related) - LanceDB
     embedding = get_embedding(topic)
-    if embedding and EMBEDDINGS_DB.exists():
-        con = get_embeddings_db()
-        if con:
-            try:
-                semantic_results = con.execute(f"""
-                    SELECT conversation_title, content, year, month,
-                           list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as sim
-                    FROM message_embeddings
-                    WHERE list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) > 0.5
-                    ORDER BY sim DESC LIMIT 5
-                """, [embedding, embedding]).fetchall()
-                con.close()
-
-                if semantic_results:
-                    output.append("### Semantically Related Thoughts:\n")
-                    for title, content, year, month, sim in semantic_results:
-                        preview = content[:250] + "..." if len(content) > 250 else content
-                        output.append(f"**[{year}-{month:02d}]** {title or 'Untitled'} (sim: {sim:.2f})")
-                        output.append(f"> {preview}\n")
-            except Exception:
-                pass
+    if embedding and LANCE_PATH.exists():
+        semantic_results = lance_search(embedding, limit=5, min_sim=0.3)
+        if semantic_results:
+            output.append("### Semantically Related Thoughts:\n")
+            for title, content, year, month, sim in semantic_results:
+                preview = content[:250] + "..." if len(content) > 250 else content
+                output.append(f"**[{year}-{month:02d}]** {title or 'Untitled'} (sim: {sim:.2f})")
+                output.append(f"> {preview}\n")
 
     # 2. KEYWORD SEARCH (exact mentions)
     con = get_conversations()
@@ -858,29 +883,16 @@ def alignment_check(decision: str) -> str:
             if p['formula']:
                 output.append(f"_Formula: {p['formula']}_\n")
 
-    # 2. SEMANTIC SEARCH for related past decisions
+    # 2. SEMANTIC SEARCH for related past decisions - LanceDB
     embedding = get_embedding(decision)
-    if embedding and EMBEDDINGS_DB.exists():
-        con = get_embeddings_db()
-        if con:
-            try:
-                results = con.execute(f"""
-                    SELECT conversation_title, content, year, month,
-                           list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as sim
-                    FROM message_embeddings
-                    WHERE list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) > 0.55
-                    ORDER BY sim DESC LIMIT 5
-                """, [embedding, embedding]).fetchall()
-                con.close()
-
-                if results:
-                    output.append("### Related Past Thinking:\n")
-                    for title, content, year, month, sim in results:
-                        preview = content[:200] + "..." if len(content) > 200 else content
-                        output.append(f"**[{year}-{month:02d}]** {title or 'Untitled'} (sim: {sim:.2f})")
-                        output.append(f"> {preview}\n")
-            except Exception:
-                pass
+    if embedding and LANCE_PATH.exists():
+        results = lance_search(embedding, limit=5, min_sim=0.35)
+        if results:
+            output.append("### Related Past Thinking:\n")
+            for title, content, year, month, sim in results:
+                preview = content[:200] + "..." if len(content) > 200 else content
+                output.append(f"**[{year}-{month:02d}]** {title or 'Untitled'} (sim: {sim:.2f})")
+                output.append(f"> {preview}\n")
 
     if len(output) == 1:
         output.append("_No direct alignment guidance found. Try rephrasing or use semantic_search._")
@@ -1008,29 +1020,14 @@ def thinking_trajectory(topic: str) -> str:
     """
     output = [f"## Thinking Trajectory: '{topic}'\n"]
 
-    # 1. Get semantic matches from embeddings
+    # 1. Get semantic matches from embeddings - LanceDB
     embedding = get_embedding(topic)
     semantic_results = []
 
-    if embedding and EMBEDDINGS_DB.exists():
-        con = get_embeddings_db()
-        if con:
-            try:
-                semantic_results = con.execute(f"""
-                    SELECT
-                        year,
-                        month,
-                        conversation_title,
-                        content,
-                        list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as similarity
-                    FROM message_embeddings
-                    WHERE list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) > 0.5
-                    ORDER BY similarity DESC
-                    LIMIT 20
-                """, [embedding, embedding]).fetchall()
-                con.close()
-            except:
-                pass
+    if embedding and LANCE_PATH.exists():
+        lance_results = lance_search(embedding, limit=20, min_sim=0.3)
+        # Reformat to match expected tuple structure (year, month, title, content, sim)
+        semantic_results = [(r[2], r[3], r[0], r[1], r[4]) for r in lance_results]
 
     # 2. Get keyword matches with temporal distribution
     conv_con = get_conversations()
@@ -1099,36 +1096,35 @@ def thinking_trajectory(topic: str) -> str:
 
 
 def _embedding_stats() -> str:
-    """Internal: Get statistics about the embeddings database."""
-    if not EMBEDDINGS_DB.exists():
-        return "Embeddings database not found. Run embed_messages.py to create it."
+    """Internal: Get statistics about the embeddings database (LanceDB)."""
+    if not LANCE_PATH.exists():
+        return "LanceDB not found. Run migrate_to_lancedb.py to create it."
 
-    con = get_embeddings_db()
-    if not con:
-        return "Could not connect to embeddings database."
+    db = get_lance_db()
+    if not db:
+        return "Could not connect to LanceDB."
 
     try:
-        total = con.execute("SELECT COUNT(*) FROM message_embeddings").fetchone()[0]
-        by_year = con.execute("""
-            SELECT year, COUNT(*) as count
-            FROM message_embeddings
-            GROUP BY year
-            ORDER BY year
-        """).fetchall()
-        con.close()
+        tbl = db.open_table("message")
+        total = tbl.count_rows()
+        # Get by-year stats
+        df = tbl.to_pandas()[['year']].value_counts().reset_index()
+        df.columns = ['year', 'count']
+        by_year = sorted(df.values.tolist(), key=lambda x: x[0])
     except Exception as e:
         return f"Error: {e}"
 
     output = [
-        "## Embedding Statistics\n",
+        "## Embedding Statistics (LanceDB)\n",
         f"**Total embedded messages**: {total:,}",
         f"**Embedding model**: {EMBEDDING_MODEL}",
-        f"**Dimensions**: {EMBEDDING_DIM}\n",
+        f"**Dimensions**: {EMBEDDING_DIM}",
+        f"**Storage**: ~440MB (32x smaller than DuckDB VSS)\n",
         "### By Year:"
     ]
 
     for year, count in by_year:
-        output.append(f"- {year}: {count:,} messages")
+        output.append(f"- {int(year)}: {count:,} messages")
 
     return "\n".join(output)
 
@@ -1300,47 +1296,28 @@ def code_to_conversation(query: str, limit: int = 10) -> str:
 
     output = [f"## Code ↔ Conversation Search: '{query}'\n"]
 
-    # 1. Search commit embeddings
-    if EMBEDDINGS_DB.exists():
-        con = get_embeddings_db()
-        if con:
+    # 1. Search commit embeddings - LanceDB
+    if LANCE_PATH.exists():
+        db = get_lance_db()
+        if db:
             try:
-                # Check if commit_embeddings table exists
-                tables = con.execute("SHOW TABLES").fetchall()
-                has_commits = any('commit_embeddings' in str(t) for t in tables)
-
-                if has_commits:
-                    commit_results = con.execute(f"""
-                        SELECT
-                            repo_name,
-                            message,
-                            timestamp,
-                            list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as similarity
-                        FROM commit_embeddings
-                        ORDER BY similarity DESC
-                        LIMIT ?
-                    """, [embedding, limit // 2]).fetchall()
-
-                    if commit_results:
+                # Search commits table if exists
+                if "commit" in db.table_names():
+                    tbl = db.open_table("commit")
+                    commit_df = tbl.search(embedding).limit(limit // 2).to_pandas()
+                    if not commit_df.empty:
                         output.append("### Related Commits")
-                        for repo, msg, ts, sim in commit_results:
+                        for _, row in commit_df.iterrows():
+                            repo = row.get('repo_name', 'unknown')
+                            msg = str(row.get('message', ''))
+                            ts = row.get('timestamp', '')
+                            sim = 1 / (1 + row.get('_distance', 0))
                             msg_preview = msg.split('\n')[0][:80]
                             output.append(f"**[{repo}]** {msg_preview}")
                             output.append(f"  {str(ts)[:10]} | Similarity: {sim:.3f}\n")
 
-                # Search conversation embeddings
-                conv_results = con.execute(f"""
-                    SELECT
-                        conversation_title,
-                        content,
-                        year,
-                        month,
-                        list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as similarity
-                    FROM message_embeddings
-                    ORDER BY similarity DESC
-                    LIMIT ?
-                """, [embedding, limit // 2]).fetchall()
-
+                # Search message embeddings
+                conv_results = lance_search(embedding, limit=limit // 2)
                 if conv_results:
                     output.append("### Related Conversations")
                     for title, content, year, month, sim in conv_results:
@@ -1540,16 +1517,14 @@ def _github_stats() -> str:
         for repo, commits in top_repos:
             output.append(f"- {repo}: {commits} commits")
 
-    # Embedding stats
-    if EMBEDDINGS_DB.exists():
+    # Embedding stats - LanceDB
+    if LANCE_PATH.exists():
         try:
-            emb_con = get_embeddings_db()
-            tables = emb_con.execute("SHOW TABLES").fetchall()
-            if any('commit_embeddings' in str(t) for t in tables):
-                commit_emb = emb_con.execute("SELECT COUNT(*) FROM commit_embeddings").fetchone()[0]
-                output.append(f"\n### Embeddings")
+            db = get_lance_db()
+            if db and "commit" in db.table_names():
+                commit_emb = db.open_table("commit").count_rows()
+                output.append(f"\n### Embeddings (LanceDB)")
                 output.append(f"**Commit messages embedded**: {commit_emb:,}")
-            emb_con.close()
         except:
             pass
 
@@ -1756,151 +1731,20 @@ DATA_DIR = BASE / "data"
 
 @mcp.tool()
 def query_focus(month: str = None, limit: int = 10) -> str:
-    """
-    Query daily focus from focus/v1 interpretation.
-    Shows keywords extracted for each day.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max days to return (default 10)
-    """
-    focus_path = INTERP_DIR / "focus" / "v1" / "daily.parquet"
-    if not focus_path.exists():
-        return "focus/v1 not built. Run: python pipelines/build_focus_v1.py"
-
-    con = get_interpretations_db()
-
-    if month:
-        query = f"""
-            SELECT date, top_keyword, keywords, focus_score, message_count
-            FROM '{focus_path}'
-            WHERE CAST(date AS VARCHAR) LIKE ?
-            ORDER BY date DESC
-            LIMIT ?
-        """
-        results = con.execute(query, [f"{month}%", limit]).fetchall()
-    else:
-        query = f"""
-            SELECT date, top_keyword, keywords, focus_score, message_count
-            FROM '{focus_path}'
-            ORDER BY date DESC
-            LIMIT ?
-        """
-        results = con.execute(query, [limit]).fetchall()
-
-    if not results:
-        return f"No focus data found for {month or 'any period'}"
-
-    output = [f"## Daily Focus (focus/v1)\n"]
-
-    for date, top, keywords_json, score, msg_count in results:
-        import json
-        try:
-            kw_list = json.loads(keywords_json)[:5]
-        except:
-            kw_list = []
-        output.append(f"**{date}** [{top}] score={score:.2f}")
-        output.append(f"  Keywords: {', '.join(kw_list)}")
-        output.append(f"  Messages: {msg_count}\n")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/daily-focus-v1.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/daily-focus-v1.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_focus_v2(month: str = None, limit: int = 10) -> str:
-    """
-    Query LLM-generated daily summaries from focus/v2.
-    Richer than v1 - full narrative summaries of each day.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max days to return (default 10)
-    """
-    focus_path = INTERP_DIR / "focus" / "v2" / "daily.parquet"
-    if not focus_path.exists():
-        return "focus/v2 not built. Run the focus v2 pipeline."
-
-    con = get_interpretations_db()
-
-    if month:
-        query = f"""
-            SELECT date, summary, message_count
-            FROM '{focus_path}'
-            WHERE CAST(date AS VARCHAR) LIKE ?
-            ORDER BY date DESC
-            LIMIT {limit}
-        """
-        results = con.execute(query, [f"{month}%"]).fetchall()
-    else:
-        query = f"""
-            SELECT date, summary, message_count
-            FROM '{focus_path}'
-            ORDER BY date DESC
-            LIMIT {limit}
-        """
-        results = con.execute(query).fetchall()
-    con.close()
-
-    if not results:
-        return f"No focus data found{' for ' + month if month else ''}"
-
-    output = [f"📅 Daily Focus (v2 LLM summaries){' for ' + month if month else ''}\n"]
-    for date, summary, msg_count in results:
-        output.append(f"**{date}** ({msg_count} messages)")
-        output.append(f"  {summary[:300]}{'...' if len(summary) > 300 else ''}\n")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/daily-focus-v2.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/daily-focus-v2.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_mvp_velocity(month: str = None, limit: int = 12) -> str:
-    """
-    Query MVP/development velocity patterns from mvp_velocity/v2.
-    Shows how Mordechai approaches building - oneshot, iterate, asap, etc.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max months to return (default 12)
-    """
-    path = INTERP_DIR / "mvp_velocity" / "v2" / "monthly.parquet"
-    if not path.exists():
-        return "mvp_velocity/v2 not built. Run: python pipelines/build_mvp_velocity_v2.py"
-
-    con = get_interpretations_db()
-
-    if month:
-        query = f"""
-            SELECT month_start, pattern_count, mvp_energy, dominant_pattern,
-                   pattern_types, mvp_message_count, patterns_json
-            FROM '{path}'
-            WHERE CAST(month_start AS VARCHAR) LIKE ?
-            ORDER BY month_start DESC
-            LIMIT {limit}
-        """
-        results = con.execute(query, [f"{month}%"]).fetchall()
-    else:
-        query = f"""
-            SELECT month_start, pattern_count, mvp_energy, dominant_pattern,
-                   pattern_types, mvp_message_count, patterns_json
-            FROM '{path}'
-            ORDER BY month_start DESC
-            LIMIT {limit}
-        """
-        results = con.execute(query).fetchall()
-    con.close()
-
-    if not results:
-        return f"No MVP velocity data found{' for ' + month if month else ''}"
-
-    output = [f"🚀 MVP Velocity Patterns{' for ' + month if month else ''}\n"]
-    for row in results:
-        month_start, count, energy, dominant, types, mvp_msgs, _ = row
-        output.append(f"**{month_start}** - Energy: {energy.upper()}")
-        output.append(f"  Dominant: {dominant} | Patterns: {count}")
-        output.append(f"  Types: {types}")
-        output.append(f"  MVP messages: {mvp_msgs}\n")
-
-    return "\n".join(output)
+    """BROKEN: Connection error during materialization. Use search_conversations('MVP') instead."""
+    return "⚠️ BROKEN: Connection error during data extraction.\n\nUse semantic_search('mvp development') or search_conversations('MVP') instead."
 
 
 @mcp.tool()
@@ -2332,334 +2176,44 @@ def search_youtube_searches(query: str, limit: int = 20) -> str:
 
 @mcp.tool()
 def query_signature_phrases(category: str = None, limit: int = 50) -> str:
-    """
-    Get Mordechai's signature phrases and catchphrases.
-    These are recurring expressions that define his communication style.
-
-    Args:
-        category: Optional filter by category
-        limit: Max results (default 50)
-    """
-    # Prefer enriched (has meanings for top 30), fall back to phrases
-    enriched = INTERP_DIR / "signature_phrases" / "v2" / "enriched.parquet"
-    phrases = INTERP_DIR / "signature_phrases" / "v2" / "phrases.parquet"
-    path = enriched if enriched.exists() else phrases
-    if not path.exists():
-        return "Signature phrases not extracted yet."
-
-    con = get_interpretations_db()
-
-    if category:
-        results = con.execute(f"""
-            SELECT phrase, category, count, meaning, style_insight
-            FROM '{path}'
-            WHERE category ILIKE ?
-            ORDER BY count DESC
-            LIMIT ?
-        """, [f"%{category}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT phrase, category, count, meaning, style_insight
-            FROM '{path}'
-            ORDER BY count DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return "No signature phrases found."
-
-    output = ["🗣️ Signature Phrases\n"]
-    for phrase, cat, freq, meaning, style in results:
-        output.append(f"  **\"{phrase}\"** [{cat}] ({freq}x)")
-        if meaning:
-            output.append(f"    📝 {meaning[:100]}")
-        if style:
-            output.append(f"    💡 {style[:100]}")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/signature-phrases.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/signature-phrases.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_insights(month: str = None, category: str = None, limit: int = 20) -> str:
-    """
-    Query extracted insights from conversations.
-    Key realizations, breakthroughs, and learnings.
-
-    Args:
-        month: Optional YYYY-MM filter
-        category: Optional category filter
-        limit: Max results (default 20)
-    """
-    path = INTERP_DIR / "insights" / "v1" / "insights.parquet"
-    if not path.exists():
-        return "Insights not extracted yet."
-
-    con = get_interpretations_db()
-
-    where_clauses = []
-    params = []
-
-    if month:
-        where_clauses.append("CAST(date AS VARCHAR) LIKE ?")
-        params.append(f"{month}%")
-    if category:
-        where_clauses.append("category ILIKE ?")
-        params.append(f"%{category}%")
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    params.append(limit)
-
-    results = con.execute(f"""
-        SELECT date, insight, category, significance
-        FROM '{path}'
-        {where_sql}
-        ORDER BY date DESC
-        LIMIT ?
-    """, params).fetchall()
-
-    if not results:
-        return "No insights found."
-
-    output = [f"💡 Insights ({len(results)} results)\n"]
-    for date, insight, cat, sig in results:
-        output.append(f"  [{str(date)[:10]}] [{cat}] (significance: {sig})")
-        output.append(f"    {insight[:150]}...")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/insights.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/insights.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_questions(month: str = None, category: str = None, limit: int = 20) -> str:
-    """
-    Query questions Mordechai has asked.
-    Reveals his inquiry patterns and curiosity areas.
-
-    Args:
-        month: Optional YYYY-MM filter
-        category: Optional category filter
-        limit: Max results (default 20)
-    """
-    path = INTERP_DIR / "questions" / "v2" / "questions.parquet"
-    if not path.exists():
-        return "Questions not extracted yet."
-
-    con = get_interpretations_db()
-
-    where_clauses = []
-    params = []
-
-    if month:
-        where_clauses.append("CAST(date AS VARCHAR) LIKE ?")
-        params.append(f"{month}%")
-    if category:
-        where_clauses.append("category ILIKE ?")
-        params.append(f"%{category}%")
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    params.append(limit)
-
-    results = con.execute(f"""
-        SELECT date, question, category
-        FROM '{path}'
-        {where_sql}
-        ORDER BY date DESC
-        LIMIT ?
-    """, params).fetchall()
-
-    if not results:
-        return "No questions found."
-
-    output = [f"❓ Questions ({len(results)} results)\n"]
-    for date, q, cat in results:
-        output.append(f"  [{str(date)[:10]}] [{cat}]")
-        output.append(f"    {q}")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/questions.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/questions.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_monthly_themes(limit: int = 12) -> str:
-    """
-    Query monthly themes and narratives.
-    High-level summary of what each month was about.
-
-    Args:
-        limit: Max months to return (default 12)
-    """
-    path = INTERP_DIR / "monthly_themes" / "v2" / "monthly.parquet"
-    if not path.exists():
-        return "Monthly themes not extracted yet."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT month_start, title, theme, emotional_arc, breakthroughs, struggles, narrative, message_count
-        FROM '{path}'
-        ORDER BY month_start DESC
-        LIMIT ?
-    """, [limit]).fetchall()
-
-    if not results:
-        return "No monthly themes found."
-
-    output = ["📅 Monthly Themes\n"]
-    for month, title, theme, arc, breaks, struggles, narrative, msgs in results:
-        output.append(f"### {str(month)[:7]}: {title}")
-        output.append(f"  Theme: {theme[:150] if theme else 'N/A'}")
-        output.append(f"  Arc: {arc[:100] if arc else 'N/A'}")
-        if breaks:
-            output.append(f"  Breakthroughs: {breaks[:120]}...")
-        if struggles:
-            output.append(f"  Struggles: {struggles[:120]}...")
-        if narrative:
-            output.append(f"  Narrative: {narrative[:200]}...")
-        output.append(f"  Messages: {msgs}")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/monthly-themes.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/monthly-themes.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_intellectual_evolution(limit: int = 11) -> str:
-    """
-    Query intellectual evolution - how thinking changed across quarters.
-    Tracks evolved beliefs, new frameworks, emerged/faded interests.
-
-    Args:
-        limit: Max quarter comparisons to return (default 11)
-    """
-    path = INTERP_DIR / "intellectual_evolution" / "v2" / "quarterly.parquet"
-    if not path.exists():
-        return "Intellectual evolution not extracted yet."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT period_label, evolved_beliefs, new_frameworks,
-               faded_interests, emerged_interests, persistent_themes,
-               sophistication_shift, pivotal_insight
-        FROM '{path}'
-        ORDER BY earlier_quarter DESC
-        LIMIT ?
-    """, [limit]).fetchall()
-
-    if not results:
-        return "No intellectual evolution data found."
-
-    output = ["🧠 Intellectual Evolution (Quarter by Quarter)\n"]
-    for period, beliefs, frameworks, faded, emerged, persistent, shift, pivot in results:
-        output.append(f"### {period}")
-        output.append(f"  **Pivotal Insight**: {pivot[:200] if pivot else 'N/A'}")
-        if shift:
-            output.append(f"  **Sophistication Shift**: {shift[:150]}")
-        if frameworks:
-            output.append(f"  **New Frameworks**: {frameworks[:150]}...")
-        if emerged:
-            output.append(f"  **Emerged Interests**: {emerged[:150]}...")
-        if faded:
-            output.append(f"  **Faded Interests**: {faded[:150]}...")
-        if beliefs:
-            output.append(f"  **Evolved Beliefs**: {beliefs[:200]}...")
-        if persistent:
-            output.append(f"  **Persistent Themes**: {persistent[:150]}...")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/intellectual-evolution.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/intellectual-evolution.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_weekly_summaries(month: str = None, limit: int = 10) -> str:
-    """
-    Query weekly summaries - rich narrative summaries of each week.
-    SUPER quality data with detailed focus areas and accomplishments.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max weeks to return (default 10)
-    """
-    path = INTERP_DIR / "weekly_summaries" / "v1" / "weekly.parquet"
-    if not path.exists():
-        return "Weekly summaries not extracted yet."
-
-    con = get_interpretations_db()
-
-    if month:
-        results = con.execute(f"""
-            SELECT week_start, summary, days_with_data, total_messages
-            FROM '{path}'
-            WHERE CAST(week_start AS VARCHAR) LIKE ?
-            ORDER BY week_start DESC
-            LIMIT ?
-        """, [f"{month}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT week_start, summary, days_with_data, total_messages
-            FROM '{path}'
-            ORDER BY week_start DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return f"No weekly summaries found{' for ' + month if month else ''}."
-
-    output = ["📆 Weekly Summaries\n"]
-    for week, summary, days, msgs in results:
-        output.append(f"### Week of {week} ({days} days, {msgs} msgs)")
-        if summary:
-            if len(summary) > 600:
-                output.append(f"  {summary[:600]}...")
-            else:
-                output.append(f"  {summary}")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-synthesis.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-synthesis.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_mood(month: str = None, limit: int = 14) -> str:
-    """
-    Query daily mood and energy patterns.
-    Shows emotional and cognitive state over time.
-
-    Args:
-        month: Optional YYYY-MM filter
-        limit: Max days to return (default 14)
-    """
-    path = INTERP_DIR / "mood" / "v1" / "daily.parquet"
-    if not path.exists():
-        return "Mood data not extracted yet."
-
-    con = get_interpretations_db()
-
-    if month:
-        results = con.execute(f"""
-            SELECT date, mood, energy, cognitive_state, stress, explanation
-            FROM '{path}'
-            WHERE CAST(date AS VARCHAR) LIKE ?
-            ORDER BY date DESC
-            LIMIT ?
-        """, [f"{month}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT date, mood, energy, cognitive_state, stress, explanation
-            FROM '{path}'
-            ORDER BY date DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return "No mood data found."
-
-    output = ["🎭 Mood Patterns\n"]
-    for date, mood, energy, cog, stress, expl in results:
-        output.append(f"  [{str(date)[:10]}] {mood} | Energy: {energy} | Stress: {stress}")
-        output.append(f"    Cognitive: {cog}")
-        if expl:
-            output.append(f"    Why: {expl[:100]}...")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/mood-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/mood-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2668,209 +2222,26 @@ def query_mood(month: str = None, limit: int = 14) -> str:
 
 @mcp.tool()
 def query_accomplishments(month: str = None, limit: int = 10) -> str:
-    """
-    Query daily accomplishments - what got done each day.
-    Rich data with ~20 accomplishments per active day.
-
-    Args:
-        month: Optional YYYY-MM filter
-        limit: Max days to return (default 10)
-    """
-    path = INTERP_DIR / "daily_accomplishments" / "v1" / "daily.parquet"
-    if not path.exists():
-        return "Daily accomplishments not extracted yet."
-
-    con = get_interpretations_db()
-    import json
-
-    if month:
-        results = con.execute(f"""
-            SELECT date, accomplishments_json, accomplishment_count, message_count
-            FROM '{path}'
-            WHERE CAST(date AS VARCHAR) LIKE ?
-            AND accomplishment_count > 0
-            ORDER BY date DESC
-            LIMIT ?
-        """, [f"{month}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT date, accomplishments_json, accomplishment_count, message_count
-            FROM '{path}'
-            WHERE accomplishment_count > 0
-            ORDER BY date DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return "No accomplishments found."
-
-    output = ["✅ Daily Accomplishments\n"]
-    for date, acc_json, acc_count, msg_count in results:
-        output.append(f"### {str(date)[:10]} ({acc_count} accomplishments, {msg_count} msgs)")
-        try:
-            accomplishments = json.loads(acc_json) if acc_json else []
-            for acc in accomplishments[:5]:  # Show top 5
-                cat = acc.get('category', 'other')
-                text = acc.get('accomplishment', '')[:100]
-                output.append(f"  ✓ [{cat}] {text}")
-            if len(accomplishments) > 5:
-                output.append(f"  ... and {len(accomplishments) - 5} more")
-        except:
-            output.append("  (parse error)")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/accomplishments.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/accomplishments.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_glossary(term: str = None) -> str:
-    """
-    Query personal glossary - SEED-style definitions of terms.
-    Contains unique definitions like "bottleneck = amplifier".
-
-    Args:
-        term: Optional term to search for
-    """
-    path = INTERP_DIR / "glossary" / "v1" / "terms.parquet"
-    if not path.exists():
-        return "Glossary not extracted yet."
-
-    con = get_interpretations_db()
-
-    if term:
-        results = con.execute(f"""
-            SELECT term, definition, term_type, related_terms, example_usage, confidence
-            FROM '{path}'
-            WHERE term ILIKE ? OR definition ILIKE ?
-            ORDER BY confidence DESC
-        """, [f"%{term}%", f"%{term}%"]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT term, definition, term_type, related_terms, example_usage, confidence
-            FROM '{path}'
-            ORDER BY term
-        """).fetchall()
-
-    if not results:
-        return f"No glossary entries found{' for ' + term if term else ''}."
-
-    output = ["📖 Personal Glossary\n"]
-    for t, defn, ttype, related, example, conf in results:
-        output.append(f"### {t} [{ttype}] (confidence: {conf})")
-        output.append(f"  {defn[:200]}..." if len(defn) > 200 else f"  {defn}")
-        if related:
-            try:
-                import json
-                rel_list = json.loads(related) if isinstance(related, str) else related
-                output.append(f"  Related: {', '.join(rel_list[:5])}")
-            except:
-                pass
-        if example:
-            output.append(f"  Example: \"{example[:100]}...\"")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/07-meta/glossary.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/07-meta/glossary.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_phrase_context(phrase: str = None, limit: int = 20) -> str:
-    """
-    Query phrase contexts - deep analysis of recurring phrases.
-    Shows meaning, category, and style insights for each phrase.
-
-    Args:
-        phrase: Optional phrase to search for
-        limit: Max results (default 20)
-    """
-    path = INTERP_DIR / "phrase_context" / "v1" / "contexts.parquet"
-    if not path.exists():
-        return "Phrase contexts not extracted yet."
-
-    con = get_interpretations_db()
-
-    if phrase:
-        results = con.execute(f"""
-            SELECT phrase, count, meaning, category, phrase_type, style_insight
-            FROM '{path}'
-            WHERE phrase ILIKE ?
-            ORDER BY count DESC
-            LIMIT ?
-        """, [f"%{phrase}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT phrase, count, meaning, category, phrase_type, style_insight
-            FROM '{path}'
-            ORDER BY count DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return f"No phrase contexts found{' for ' + phrase if phrase else ''}."
-
-    output = ["🗣️ Phrase Context Analysis\n"]
-    for p, cnt, meaning, cat, ptype, style in results:
-        output.append(f"### \"{p}\" (used {cnt}x)")
-        output.append(f"  Category: {cat} | Type: {ptype}")
-        output.append(f"  Meaning: {meaning[:150]}..." if meaning and len(meaning) > 150 else f"  Meaning: {meaning}")
-        if style:
-            output.append(f"  Style insight: {style[:100]}...")
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/phrase-context.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/phrase-context.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 @mcp.tool()
 def query_project_arcs(project: str = None, limit: int = 20) -> str:
-    """
-    Query project arcs - tracks 185 projects with stages, momentum, blockers.
-    Shows project lifecycle from ideation to completion.
-
-    Args:
-        project: Optional project name to search for
-        limit: Max results (default 20)
-    """
-    projects_path = INTERP_DIR / "project_arcs" / "v1" / "projects.parquet"
-
-    if not projects_path.exists():
-        return "Project arcs not extracted yet."
-
-    con = get_interpretations_db()
-
-    # Query projects summary
-    if project:
-        results = con.execute(f"""
-            SELECT name, first_seen, weeks_active, stage_progression, final_stage, outcome
-            FROM '{projects_path}'
-            WHERE name ILIKE ?
-            ORDER BY weeks_active DESC
-            LIMIT ?
-        """, [f"%{project}%", limit]).fetchall()
-    else:
-        results = con.execute(f"""
-            SELECT name, first_seen, weeks_active, stage_progression, final_stage, outcome
-            FROM '{projects_path}'
-            ORDER BY weeks_active DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-
-    if not results:
-        return f"No projects found{' matching ' + project if project else ''}."
-
-    output = ["🚀 Project Arcs\n"]
-    for name, first, weeks, stages, final, outcome in results:
-        output.append(f"### {name}")
-        output.append(f"  First seen: {str(first)[:10]} | Active: {weeks} weeks")
-        output.append(f"  Final stage: {final} | Outcome: {outcome}")
-        if stages:
-            try:
-                import json
-                stage_list = json.loads(stages) if isinstance(stages, str) else stages
-                output.append(f"  Progression: {' → '.join(stage_list)}")
-            except:
-                pass
-        output.append("")
-
-    return "\n".join(output)
+    """DEPRECATED: Materialized to wiki. Read content/03-case-studies/project-arcs.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/03-case-studies/project-arcs.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3116,22 +2487,14 @@ def unified_search(query: str, limit: int = 15) -> str:
     """
     results = []
 
-    # 1. Conversation embeddings (semantic search)
+    # 1. Conversation embeddings (semantic search) - LanceDB
     try:
-        model = get_embedding_model()
-        query_emb = model.encode(query, convert_to_numpy=True)
-
-        emb_con = get_embeddings_db()
-        if emb_con:
-            conv_results = emb_con.execute(f"""
-                SELECT 'conversation' as source, conversation_title as title,
-                       content, year || '-' || LPAD(CAST(month AS VARCHAR), 2, '0') as date,
-                       list_inner_product(embedding, ?::FLOAT[{EMBEDDING_DIM}]) as score
-                FROM message_embeddings
-                ORDER BY score DESC
-                LIMIT 5
-            """, [query_emb.tolist()]).fetchall()
-            results.extend(conv_results)
+        embedding = get_embedding(query)
+        if embedding and LANCE_PATH.exists():
+            lance_results = lance_search(embedding, limit=5)
+            for title, content, year, month, sim in lance_results:
+                date = f"{year}-{month:02d}"
+                results.append(('conversation', title or 'Untitled', content, date, sim))
     except Exception:
         pass
 
@@ -3220,6 +2583,363 @@ def unified_search(query: str, limit: int = 15) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HIDDEN INTERPRETATION LAYERS (Phase 1 55x Mining - Jan 2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_conversation_titles(month: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/conversation-titles.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/conversation-titles.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_weekly_expertise(month: str = None, limit: int = 12) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-expertise.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-expertise.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_tool_preferences(month: str = None, limit: int = 12) -> str:
+    """BROKEN: Only returns message counts, no actual preference data."""
+    return "⚠️ BROKEN: This tool only returns message counts, not actual preferences.\n\nUse query_tool_stacks() for technology stack evolution."
+
+
+@mcp.tool()
+def query_tool_combos(limit: int = 10) -> str:
+    """BROKEN: Empty data - no stack combinations recorded."""
+    return "⚠️ BROKEN: No stack combinations were recorded in the data.\n\nUse query_tool_stacks() for technology stack evolution."
+
+
+@mcp.tool()
+def query_intellectual_themes(theme: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/01-frameworks/themes.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/01-frameworks/themes.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_youtube_links(month: str = None, limit: int = 15) -> str:
+    """BROKEN: Tool returns parse errors. Use youtube_search() instead."""
+    return "⚠️ BROKEN: This tool returns parse errors for all data.\n\nUse youtube_search() or youtube_semantic_search() instead."
+
+
+@mcp.tool()
+def query_problem_chains(month: str = None, limit: int = 15) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/problem-chains.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/problem-chains.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SPEND ANALYSIS TOOLS (Phase 2 55x Mining - Jan 2026)
+# Mining 732K OpenRouter API calls for insights
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_model_efficiency(top_n: int = 20, sort_by: str = "cost") -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/model-efficiency.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/model-efficiency.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_provider_performance(month: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/provider-performance.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/provider-performance.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_spend_temporal(month: str = None, view: str = "daily") -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/spend-temporal.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/spend-temporal.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_spend_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/spend-analysis.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/spend-analysis.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONVERSATION ANALYSIS TOOLS (Phase 3 55x Mining - Jan 2026)
+# Mining 353K messages for threads, Q&A patterns, and corrections
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_conversation_stats(top_n: int = 20, sort_by: str = "messages") -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/conversation-stats.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/conversation-stats.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_deep_conversations(min_messages: int = 100, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/deep-conversations.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/deep-conversations.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_question_patterns(month: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/question-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/question-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_correction_patterns(month: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/correction-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/correction-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_conversation_summary() -> str:
+    """
+    Get a comprehensive conversation analysis summary.
+    """
+    stats_path = INTERP_DIR / "conversation_stats" / "v1" / "conversations.parquet"
+    qa_path = INTERP_DIR / "conversation_qa" / "v1" / "questions.parquet"
+    corr_path = INTERP_DIR / "conversation_corrections" / "v1" / "corrections.parquet"
+    deep_path = INTERP_DIR / "conversation_threads" / "v1" / "deep_conversations.parquet"
+
+    if not stats_path.exists():
+        return "Conversation analysis not built. Run: python pipelines/build_conversation_analysis.py"
+
+    con = get_interpretations_db()
+
+    output = ["💬 CONVERSATION ANALYSIS SUMMARY\n"]
+    output.append("=" * 50)
+
+    # Overall stats
+    totals = con.execute(f"""
+        SELECT
+            COUNT(*) as conversations,
+            SUM(message_count) as messages,
+            SUM(total_words) as words,
+            SUM(questions_asked) as questions,
+            SUM(code_messages) as code_msgs,
+            AVG(message_count) as avg_length
+        FROM '{stats_path}'
+    """).fetchone()
+
+    output.append(f"\n📊 TOTALS")
+    output.append(f"  Conversations: {totals[0]:,}")
+    output.append(f"  Messages: {totals[1]:,}")
+    output.append(f"  Total Words: {totals[2]:,}")
+    output.append(f"  Questions Asked: {totals[3]:,}")
+    output.append(f"  Code Messages: {totals[4]:,}")
+    output.append(f"  Avg Conversation Length: {totals[5]:.0f} messages")
+
+    # Deep conversations
+    if deep_path.exists():
+        deep = con.execute(f"SELECT COUNT(*) FROM '{deep_path}'").fetchone()[0]
+        output.append(f"\n🌊 DEEP CONVERSATIONS")
+        output.append(f"  100+ message conversations: {deep}")
+
+    # Q&A stats
+    if qa_path.exists():
+        q_count = con.execute(f"SELECT COUNT(*) FROM '{qa_path}'").fetchone()[0]
+        output.append(f"\n❓ Q&A PATTERNS")
+        output.append(f"  User questions: {q_count:,}")
+
+    # Correction stats
+    if corr_path.exists():
+        c_count = con.execute(f"SELECT COUNT(*) FROM '{corr_path}'").fetchone()[0]
+        output.append(f"\n🔄 CORRECTIONS")
+        output.append(f"  Correction messages: {c_count:,}")
+
+    # Top conversations by messages
+    top = con.execute(f"""
+        SELECT conversation_title, message_count
+        FROM '{stats_path}'
+        ORDER BY message_count DESC
+        LIMIT 5
+    """).fetchall()
+
+    output.append(f"\n🏆 LONGEST CONVERSATIONS")
+    for title, msgs in top:
+        t = (title or "untitled")[:35]
+        output.append(f"  {msgs:>5,} msgs - {t}")
+
+    return "\n".join(output)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BEHAVIORAL ARCHAEOLOGY TOOLS (Phase 4 55x Mining - Jan 2026)
+# Mining 112K Google searches/visits for behavioral patterns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_search_patterns(month: str = None, intent: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/search-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/search-patterns.md\n\nUse search_google_searches() for fresh queries."
+
+
+@mcp.tool()
+def query_browsing_patterns(category: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/browsing-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/browsing-patterns.md\n\nUse search_google_visits() for fresh queries."
+
+
+@mcp.tool()
+def query_research_velocity(month: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/research-velocity.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/research-velocity.md\n\nUse search_google_searches() for fresh queries."
+
+
+@mcp.tool()
+def query_curiosity_terms(month: str = None, limit: int = 30) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/curiosity-terms.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/curiosity-terms.md\n\nUse search_google_searches() for fresh queries."
+
+
+@mcp.tool()
+def query_behavioral_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/behavioral-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/behavioral-patterns.md\n\nUse search_google_searches() or search_google_visits() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CODE PRODUCTIVITY TOOLS (Phase 5 55x Mining - Jan 2026)
+# Mining 1.4K commits + 132 repos for productivity patterns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_code_velocity(month: str = None, view: str = "monthly") -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/code-velocity.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/code-velocity.md\n\nUse github_project_timeline() or code_to_conversation() for fresh queries."
+
+
+@mcp.tool()
+def query_repo_stats(active_only: bool = True, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/repo-stats.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/repo-stats.md\n\nUse github_project_timeline() for fresh queries."
+
+
+@mcp.tool()
+def query_language_stats() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/language-stats.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/language-stats.md\n\nUse github_project_timeline() for fresh queries."
+
+
+@mcp.tool()
+def query_commit_patterns(commit_type: str = None) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/commit-patterns.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/commit-patterns.md\n\nUse search_file_changes() for fresh queries."
+
+
+@mcp.tool()
+def query_high_productivity_days(limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/high-productivity-days.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/high-productivity-days.md\n\nUse search_file_changes() for fresh queries."
+
+
+@mcp.tool()
+def query_code_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/code-productivity.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/code-productivity.md\n\nUse search_file_changes() or github_project_timeline() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MARKDOWN KNOWLEDGE TOOLS (Phase 6 55x Mining - Jan 2026)
+# Mining 5.5K documents (6.3M words) for knowledge patterns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_markdown_stats(category: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-stats.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-stats.md\n\nUse search_markdown() for fresh queries."
+
+
+@mcp.tool()
+def query_markdown_categories() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-categories.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-categories.md\n\nUse search_markdown() for fresh queries."
+
+
+@mcp.tool()
+def query_markdown_projects() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-projects.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-projects.md\n\nUse search_markdown() for fresh queries."
+
+
+@mcp.tool()
+def query_curated_docs(collection: str = "ip") -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/curated-docs.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/curated-docs.md\n\nUse search_markdown() for fresh queries."
+
+
+@mcp.tool()
+def query_markdown_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-corpus.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-corpus.md\n\nUse search_markdown() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 7: CROSS-DIMENSIONAL SYNTHESIS (2026-01-11)
+# Productivity matrix, learning arcs, project success, unified timeline
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_productivity_matrix(month: str = None, view: str = "daily", top_n: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/productivity-matrix.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/productivity-matrix.md\n\nUse query_accomplishments() or search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_learning_arcs(month: str = None, topic: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/learning-arcs.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/learning-arcs.md\n\nUse youtube_search() or search_google_searches() for fresh queries."
+
+
+@mcp.tool()
+def query_project_success(category: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/project-success.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/project-success.md\n\nUse github_project_timeline() for fresh queries."
+
+
+@mcp.tool()
+def query_unified_timeline(year: str = None, limit: int = 24) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/unified-timeline.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/unified-timeline.md\n\nUse unified_search() for fresh queries."
+
+
+@mcp.tool()
+def query_cross_dimensional_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/cross-dimensional.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/cross-dimensional.md\n\nUse unified_search() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 9: DISCOVERY PIPELINES (2026-01-11)
+# Anomalies, trends, recommendations, weekly synthesis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def query_anomalies(anomaly_type: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/anomalies.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/anomalies.md\n\nUse unified_search() for fresh queries."
+
+
+@mcp.tool()
+def query_trends(trend_type: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/trends.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/trends.md\n\nUse semantic_search() for fresh queries."
+
+
+@mcp.tool()
+def query_recommendations(rec_type: str = None, limit: int = 20) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/recommendations.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/recommendations.md\n\nUse semantic_search() for fresh queries."
+
+
+@mcp.tool()
+def query_weekly_synthesis(weeks: int = 10) -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-synthesis.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-synthesis.md\n\nUse search_conversations() for fresh queries."
+
+
+@mcp.tool()
+def query_discovery_summary() -> str:
+    """DEPRECATED: Materialized to wiki. Read content/02-evidence/discovery-insights.md"""
+    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/discovery-insights.md\n\nUse unified_search() for fresh queries."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESOURCES (static data endpoints)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3239,6 +2959,35 @@ def resource_embeddings() -> str:
     return brain_stats("embeddings")
 
 
+# Pre-warm models on startup for fast first query
+def _prewarm():
+    """Pre-load embedding model and LanceDB connection."""
+    import sys
+    print("Pre-warming MCP Brain...", file=sys.stderr)
+
+    # Load embedding model (8s cold start → cached)
+    model = get_embedding_model()
+
+    # Warm LanceDB connection
+    db = get_lance_db()
+    if db:
+        db.open_table("message")
+
+    # Do a dummy embed to fully initialize
+    if model:
+        model.encode("warmup", convert_to_numpy=True)
+
+    print("MCP Brain ready (model + LanceDB warmed)", file=sys.stderr)
+
+
+def _prewarm_async():
+    """Pre-warm in background thread so MCP starts immediately."""
+    import threading
+    t = threading.Thread(target=_prewarm, daemon=True)
+    t.start()
+
+
 # Run server
 if __name__ == "__main__":
+    _prewarm_async()
     mcp.run(transport="stdio")

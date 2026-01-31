@@ -23,8 +23,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import duckdb
+import numpy as np
+
 import lancedb
-import pyarrow as pa
 
 from config import (
     BASE,
@@ -131,6 +132,7 @@ def parse_jsonl(filepath: Path) -> list[dict]:
                 "created": timestamp,
                 "year": dt.year,
                 "month": dt.month,
+                "msg_index": len(records),
             }
             records.append(record)
 
@@ -158,7 +160,6 @@ def sync_to_parquet(records: list[dict]):
     if not records:
         return 0
 
-    # Load existing
     con = duckdb.connect()
     existing_ids = set()
 
@@ -178,14 +179,78 @@ def sync_to_parquet(records: list[dict]):
     if not new_records:
         return 0
 
-    # Append to parquet
-    # For now, just log - actual append needs schema alignment
-    log(f"Would append {len(new_records)} new messages to parquet")
+    log(f"Appending {len(new_records)} new messages to parquet...")
 
+    # Build schema-aligned records
+    aligned = []
+    for r in new_records:
+        content = r.get("content", "")
+        ts = r.get("created")
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.now()
+        except:
+            dt = datetime.now()
+
+        aligned.append({
+            "source": "claude-code",
+            "model": r.get("model", "unknown"),
+            "project": None,
+            "conversation_id": r.get("conversation_id"),
+            "conversation_title": r.get("conversation_title"),
+            "created": ts,
+            "updated": ts,
+            "year": dt.year,
+            "month": dt.month,
+            "day_of_week": dt.strftime("%A"),
+            "hour": dt.hour,
+            "message_id": r.get("message_id"),
+            "parent_id": None,
+            "msg_index": r.get("msg_index", 0),
+            "msg_timestamp": ts,
+            "timestamp_is_fallback": 0,
+            "role": r.get("role"),
+            "content_type": "text",
+            "is_first": 0,
+            "is_last": 0,
+            "word_count": len(content.split()),
+            "char_count": len(content),
+            "conversation_msg_count": None,
+            "has_code": 1 if "```" in content else 0,
+            "has_url": 1 if "http" in content else 0,
+            "has_question": 1 if "?" in content else 0,
+            "has_attachment": 0,
+            "has_citation": 0,
+            "content": content,
+            "temporal_precision": "exact",
+        })
+
+    # Create temp table and append
+    con.execute("CREATE TEMP TABLE new_msgs AS SELECT * FROM read_parquet(?) LIMIT 0", [str(PARQUET_PATH)])
+
+    # Insert aligned records
+    cols = list(aligned[0].keys())
+    placeholders = ", ".join(["?" for _ in cols])
+    col_names = ", ".join(cols)
+
+    for rec in aligned:
+        values = [rec[c] for c in cols]
+        con.execute(f"INSERT INTO new_msgs ({col_names}) VALUES ({placeholders})", values)
+
+    # Write combined parquet
+    backup_path = PARQUET_PATH.with_suffix(".parquet.bak")
+    con.execute(f"""
+        COPY (
+            SELECT * FROM read_parquet('{PARQUET_PATH}')
+            UNION ALL
+            SELECT * FROM new_msgs
+        ) TO '{PARQUET_PATH}' (FORMAT PARQUET, COMPRESSION ZSTD)
+    """)
+
+    log(f"Appended {len(new_records)} messages to {PARQUET_PATH.name}")
     return len(new_records)
 
 
-def sync_to_lancedb(records: list[dict]):
+def sync_to_embeddings(records: list[dict]):
     """Embed and add new messages to LanceDB."""
     if not records or not LANCE_PATH.exists():
         return 0
@@ -196,15 +261,22 @@ def sync_to_lancedb(records: list[dict]):
     if not user_records:
         return 0
 
-    # Check which are already embedded
-    db = lancedb.connect(str(LANCE_PATH))
-    tbl = db.open_table("message")
+    # Connect to LanceDB
+    try:
+        db = lancedb.connect(str(LANCE_PATH))
+        tbl = db.open_table("message")
+    except Exception as e:
+        log(f"Skipping embeddings (LanceDB error): {e}")
+        return 0
 
-    # Get existing message IDs
-    existing = tbl.to_pandas()["message_id"].tolist()
-    existing_set = set(existing)
+    # Get existing IDs efficiently (to_arrow is 2.5x faster than to_pandas)
+    ids_to_check = set(r["message_id"] for r in user_records)
+    try:
+        existing_ids = set(tbl.to_arrow().column("message_id").to_pylist())
+        existing_set = ids_to_check & existing_ids  # Only IDs that exist
+    except:
+        existing_set = set()
 
-    # Filter new
     new_records = [r for r in user_records if r["message_id"] not in existing_set]
 
     if not new_records:
@@ -232,7 +304,6 @@ def sync_to_lancedb(records: list[dict]):
             "year": r["year"],
             "month": r["month"],
             "embedding": embeddings[i].tolist(),
-            "created_at": datetime.now(),
         })
 
     # Add to LanceDB
@@ -282,9 +353,14 @@ def main():
 
     log(f"Total parsed: {len(all_records)} messages")
 
-    # Sync to LanceDB (embedding)
-    embedded = sync_to_lancedb(all_records)
-    log(f"Embedded: {embedded} messages")
+    # Sync to parquet (raw storage)
+    appended = sync_to_parquet(all_records)
+    log(f"Parquet: {appended} messages appended")
+
+    # Sync to DuckDB embeddings - DISABLED in hook (loads 463MB, crashes Mac)
+    # Run embeddings separately: python -m pipelines embed --all
+    embedded = 0  # sync_to_embeddings(all_records)
+    log(f"Embedded: {embedded} messages (skipped in hook)")
 
     log("=" * 50)
     log("Brain Sync Complete")

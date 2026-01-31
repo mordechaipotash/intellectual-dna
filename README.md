@@ -1,6 +1,6 @@
 # Intellectual DNA
 
-A personal knowledge system that turns 3 years of AI conversations (353K messages) into queryable intelligence.
+A personal knowledge system that turns 3 years of AI conversations (359K messages) into queryable intelligence.
 
 Built by a monotropic polymath who needed a system that works with deep focus, not against it.
 
@@ -26,9 +26,9 @@ Not a note-taking app. A queryable memory that finds patterns I'd never think to
 
 | What | Count |
 |------|-------|
-| Conversation messages | 353,216 |
+| Conversation messages | 359,167 |
 | Embedded vectors | 106,000 |
-| YouTube videos tracked | 32,000 |
+| YouTube videos tracked | 31,832 |
 | GitHub commits indexed | 1,427 |
 | Google searches captured | 52,791 |
 | Query time (semantic) | 256ms |
@@ -38,7 +38,7 @@ Not a note-taking app. A queryable memory that finds patterns I'd never think to
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     MCP BRAIN SERVER                            │
-│           30+ tools exposed to Claude Code/Desktop              │
+│           82 tools exposed to Claude Code/Desktop               │
 │  semantic_search · thinking_trajectory · find_contradictions    │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -54,7 +54,7 @@ Not a note-taking app. A queryable memory that finds patterns I'd never think to
 │                    FACTS (Immutable)                            │
 │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐       │
 │  │ Brain L0-2│ │ YouTube   │ │ GitHub    │ │ Google    │       │
-│  │ 353K msgs │ │ 31K vids  │ │ 1.4K      │ │ 52K       │       │
+│  │ 359K msgs │ │ 31K vids  │ │ 1.4K      │ │ 52K       │       │
 │  │ Parquet   │ │ Parquet   │ │ commits   │ │ searches  │       │
 │  └───────────┘ └───────────┘ └───────────┘ └───────────┘       │
 └─────────────────────────────────────────────────────────────────┘
@@ -86,7 +86,7 @@ Not a note-taking app. A queryable memory that finds patterns I'd never think to
 
 ## MCP Tools
 
-The brain exposes 30+ tools via Model Context Protocol:
+The brain exposes 82 tools via Model Context Protocol:
 
 ```python
 # Find conceptually similar messages
@@ -153,7 +153,7 @@ Runs at 6am. Surfaces what I'm circling, contradicting, stalling, forgetting:
 
 ## The 8 SEED Principles
 
-Foundational mental models extracted from 353K messages:
+Foundational mental models extracted from 359K messages:
 
 | Principle | Core Idea |
 |-----------|-----------|
@@ -171,7 +171,7 @@ Foundational mental models extracted from 353K messages:
 ```
 intellectual_dna/
 ├── data/
-│   ├── all_conversations.parquet    # 353K messages
+│   ├── all_conversations.parquet    # 359K messages
 │   ├── youtube_rows.parquet         # 31K videos
 │   ├── github_commits.parquet       # 1.4K commits
 │   └── facts/brain/                 # L0-L2 onion layers
@@ -185,7 +185,7 @@ intellectual_dna/
 │   ├── sync.py                      # Auto-sync from Claude Code
 │   └── daily_briefing.py            # 6am briefing agent
 └── mordelab/02-monotropic-prosthetic/
-    └── mcp_brain_server.py          # MCP server (30+ tools)
+    └── mcp_brain_server.py          # MCP server (82 tools)
 ```
 
 ## The Paradox
@@ -195,7 +195,7 @@ intellectual_dna/
 | Dimension | Reality |
 |-----------|---------|
 | Technical output | Team-level, solo |
-| AI fluency | 353K messages of practice |
+| AI fluency | 359K messages of practice |
 | Architecture | This system exists |
 | Visibility | You're reading this |
 
@@ -220,7 +220,7 @@ Reach out: [GitHub](https://github.com/mordechaipotash) · [Reddit](https://redd
 ## Related Projects
 
 - [brain-canvas](https://github.com/mordechaipotash/brain-canvas) - Give any LLM its own display (`npx brain-canvas`)
-- [youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline) - 32K+ videos, 41.8M words transcribed
+- [youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline) - 31K+ videos, transcribed
 - [python-data-engineering-portfolio](https://github.com/mordechaipotash/python-data-engineering-portfolio) - 1,059 production scripts
 - [seedgarden](https://github.com/mordechaipotash/seedgarden) - The SHELET Protocol for AI-human interfaces
 
