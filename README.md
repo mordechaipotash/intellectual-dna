@@ -1,163 +1,334 @@
-# Intellectual DNA
+<p align="center">
+  <h1 align="center">🧬 Intellectual DNA</h1>
+  <p align="center">
+    <strong>Turn 3 years of AI conversations into a queryable second brain</strong>
+  </p>
+  <p align="center">
+    376K messages · 118K embeddings · 31 MCP tools · 256ms queries
+  </p>
+</p>
 
-A personal knowledge system that turns 3 years of AI conversations (359K messages) into queryable intelligence.
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="#"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP"></a>
+  <a href="#"><img src="https://img.shields.io/badge/vectors-LanceDB-orange?style=flat-square" alt="LanceDB"></a>
+  <a href="#"><img src="https://img.shields.io/badge/embeddings-nomic--v1.5-purple?style=flat-square" alt="Embeddings"></a>
+  <a href="https://github.com/mordechaipotash/intellectual-dna/stargazers"><img src="https://img.shields.io/github/stars/mordechaipotash/intellectual-dna?style=flat-square" alt="Stars"></a>
+</p>
 
-Built by a monotropic polymath who needed a system that works with deep focus, not against it.
-
-## What This Does
+---
 
 ```
 You: "What do I actually think about agency?"
 
-Brain: Searching 106K embedded messages...
+Brain: Searching 118K embedded messages...
 
 Your position evolved:
-- 2023: "AI should do what I say"
-- 2024: "AI should preserve my decision sovereignty"
-- 2025: "100% human control, 100% machine execution"
+  2023: "AI should do what I say"
+  2024: "AI should preserve my decision sovereignty"  
+  2025: "100% human control, 100% machine execution"
 
 Related SEED principle (AGENCY PRESERVATION):
 "Maintain human decision-making control while automating everything else"
 ```
 
-Not a note-taking app. A queryable memory that finds patterns I'd never think to look for.
+## What is this?
+
+Every conversation you have with an AI is a thought you externalized. Over 3 years, that's **376,000 thoughts** — but they're scattered across ChatGPT exports, Claude sessions, Gemini chats, and code editor transcripts.
+
+Intellectual DNA turns that scattered history into a **queryable knowledge system**. Not a note-taking app — a second brain that can:
+
+- **Find patterns** you'd never think to search for
+- **Track how your thinking evolved** on any topic
+- **Surface contradictions** between what you say and what you do
+- **Cross-reference** conversations with your GitHub commits, markdown docs, and more
+
+It runs as an **MCP server** — plug it into Claude Code, Claude Desktop, or any MCP-compatible client, and your entire intellectual history becomes context.
 
 ## The Numbers
 
-| What | Count |
-|------|-------|
-| Conversation messages | 359,167 |
-| Embedded vectors | 106,000 |
-| YouTube videos tracked | 31,832 |
-| GitHub commits indexed | 1,427 |
-| Google searches captured | 52,791 |
-| Query time (semantic) | 256ms |
+| Metric | Value |
+|--------|-------|
+| Conversation messages | **376,164** |
+| Embedded vectors | **118,533** (768d, nomic-v1.5) |
+| GitHub commits indexed | **2,217** across 146 repos |
+| Markdown docs harvested | **5,524** |
+| MCP tools exposed | **31** |
+| Semantic query time | **~256ms** |
+| Vector DB size | **493MB** (was 14GB before LanceDB migration) |
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     MCP BRAIN SERVER                            │
-│           82 tools exposed to Claude Code/Desktop               │
-│  semantic_search · thinking_trajectory · find_contradictions    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+│              31 tools · Claude Code / Desktop                   │
+│  semantic_search · thinking_trajectory · alignment_check · ...  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+┌──────────────────────┐  ┌──────────────────────────────────────┐
+│    LANCEDB VECTORS   │  │         DUCKDB + PARQUET             │
+│  118K embeddings     │  │  376K messages · keyword search      │
+│  768d nomic-v1.5     │  │  columnar · compressed · portable    │
+│  493MB on disk       │  │  serverless SQL analytics            │
+└──────────────────────┘  └──────────────────────────────────────┘
+              │                         │
+              └────────────┬────────────┘
+                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      LANCEDB VECTORS                            │
-│  106K embeddings @ 768 dims · 440MB (was 14GB in DuckDB)        │
-│  nomic-embed-text-v1.5 · Apple Silicon MPS · 256ms queries      │
+│                  DATA SOURCES (Immutable)                       │
+│  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐      │
+│  │ Claude    │ │ ChatGPT   │ │ Gemini    │ │ Clawdbot  │      │
+│  │ Code/     │ │ export    │ │ sessions  │ │ sessions  │      │
+│  │ Desktop   │ │           │ │           │ │           │      │
+│  └───────────┘ └───────────┘ └───────────┘ └───────────┘      │
+│  ┌───────────┐ ┌───────────┐ ┌───────────────────────┐        │
+│  │ GitHub    │ │ Markdown  │ │ Interpretation layers  │        │
+│  │ 2.2K      │ │ 5.5K docs │ │ focus · mood · themes  │        │
+│  │ commits   │ │           │ │ spend · velocity · ...  │        │
+│  └───────────┘ └───────────┘ └───────────────────────┘        │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    FACTS (Immutable)                            │
-│  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐       │
-│  │ Brain L0-2│ │ YouTube   │ │ GitHub    │ │ Google    │       │
-│  │ 359K msgs │ │ 31K vids  │ │ 1.4K      │ │ 52K       │       │
-│  │ Parquet   │ │ Parquet   │ │ commits   │ │ searches  │       │
-│  └───────────┘ └───────────┘ └───────────┘ └───────────┘       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                INTERPRETATIONS (Derived)                        │
-│  Versioned, rebuildable, never corrupts source                  │
-│  focus/v1 · mvp_velocity/v2 · mood_patterns · weekly_summaries  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    AUTO-SYNC LAYER                              │
-│  Claude Code Stop Hook → sync.py → embed → briefing             │
-│  Every conversation automatically flows into the brain          │
+│                    AUTO-SYNC PIPELINE                           │
+│  Claude Code hook → sync.py → parquet → embed → ready          │
+│  Hourly: clawdbot sessions · Nightly: all sources + vectors    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Design Decisions
 
-**Facts vs Interpretations**: Raw data never gets touched. Derived analysis lives in versioned layers. Wrong interpretation? Delete and rebuild. Facts stay clean.
+### Facts vs Interpretations
 
-**LanceDB over DuckDB VSS**: Started with DuckDB, discovered duplicate HNSW indexes created 46x overhead (14GB for 300MB of data). Migrated to LanceDB: 440MB, same vectors, native incremental.
+Raw data is **immutable**. Derived analysis lives in versioned layers. Wrong interpretation? Delete the version and rebuild. Source data stays clean forever.
 
-**Onion Skin Layers**: L0 (event pointers) → L1 (previews + embeddings) → L2 (full content). Query what you need, not everything.
+```
+data/
+├── facts/          # NEVER modified — append only
+│   ├── brain/      # L0 index → L1 summary → L2 content → L3 raw
+│   ├── spend/      # raw → daily → monthly aggregation
+│   └── sources/    # original parquets (symlinks)
+└── interpretations/ # DERIVED — versioned, rebuildable
+    ├── focus/v1/
+    ├── mood_patterns/
+    └── weekly_summaries/
+```
 
-**Auto-sync via hooks**: Claude Code Stop hook triggers `sync.py`. New conversations flow in automatically. No manual export.
+### Onion Skin Layers (L0–L3)
 
-## MCP Tools
+Progressive disclosure — query only what you need:
 
-The brain exposes 82 tools via Model Context Protocol:
+| Layer | Contents | Use Case |
+|-------|----------|----------|
+| **L0** index | Event IDs, timestamps, source | Quick lookups, counts |
+| **L1** summary | 500-char preview + embedding | Semantic search, browsing |
+| **L2** content | Full text, has_code, has_url | Deep reading |
+| **L3** deep | Symlinks to original parquets | Source verification |
+
+### LanceDB over DuckDB VSS
+
+Started with DuckDB for vector search. Discovered duplicate HNSW indexes created **46x storage overhead** (14GB for 300MB of data). Migrated to LanceDB: **493MB**, same vectors, native incremental indexing. Same 256ms query time.
+
+## MCP Tools (31)
+
+### 🔍 Search (7)
+
+| Tool | Description |
+|------|-------------|
+| `semantic_search` | Vector similarity via LanceDB (768d nomic embeddings) |
+| `search_conversations` | Keyword search via DuckDB SQL on parquet |
+| `unified_search` | Cross-source: conversations + GitHub + markdown |
+| `search_ip_docs` | Vector search on curated IP documents |
+| `search_markdown` | Keyword search on 5.5K harvested markdown docs |
+| `code_to_conversation` | Semantic search across commits + conversations |
+| `find_user_questions` | Recent questions asked |
+
+### 🧠 Synthesis (4)
+
+| Tool | Description |
+|------|-------------|
+| `what_do_i_think` | Synthesize your views on any topic from all evidence |
+| `find_precedent` | Find similar situations from the past |
+| `alignment_check` | Check if a decision aligns with your principles |
+| `thinking_trajectory` | Track how an idea evolved over months/years |
+
+### 💬 Conversation (5)
+
+| Tool | Description |
+|------|-------------|
+| `get_conversation` | Full conversation by ID |
+| `conversations_by_date` | What happened on a specific date |
+| `what_was_i_thinking` | Month snapshot: themes, activity, concepts |
+| `concept_velocity` | How often a term appears over time |
+| `first_mention` | When a concept first appeared in your history |
+
+### 🐙 GitHub (4)
+
+| Tool | Description |
+|------|-------------|
+| `github_project_timeline` | Repo creation, commits, activity windows |
+| `conversation_project_context` | Conversations mentioning a project |
+| `validate_date_with_github` | Verify conversation dates via commit timestamps |
+| `code_to_conversation` | Bridge code changes to discussion context |
+
+### 📄 Markdown Corpus (4)
+
+| Tool | Description |
+|------|-------------|
+| `get_breakthrough_docs` | Documents tagged with high breakthrough energy |
+| `get_deep_docs` | High depth-score documents |
+| `get_project_docs` | All docs for a specific project |
+| `get_open_todos` | Documents with open TODO items |
+
+### 📊 Analysis (5)
+
+| Tool | Description |
+|------|-------------|
+| `query_tool_stacks` | Technology stack patterns |
+| `query_problem_resolution` | Debugging and problem-solving patterns |
+| `query_spend` | Cost breakdown by source and time period |
+| `query_timeline` | Cross-source timeline for any date |
+| `query_conversation_summary` | Comprehensive conversation analysis |
+
+### ⚙️ Meta (2)
+
+| Tool | Description |
+|------|-------------|
+| `brain_stats` | Overview of all data sources and counts |
+| `list_principles` / `get_principle` | Your foundational SEED principles |
+
+## Data Flow
+
+```
+  Clawdbot Sessions          Claude Code          ChatGPT Export       Gemini
+  ~/.clawdbot/agents/     ~/.claude/projects/     conversations.json   sessions
+         │                       │                       │                │
+         ▼                       ▼                       ▼                ▼
+     sync_clawdbot.py        live/sync.py          import pipeline    import pipeline
+         │                       │                       │                │
+         └───────────────────────┴───────────────┬───────┘────────────────┘
+                                                 ▼
+                            data/all_conversations.parquet (376K messages)
+                                                 │
+                                    ┌────────────┴────────────┐
+                                    ▼                         ▼
+                           embed_new_messages.py      build_*.py (88 pipelines)
+                                    │                         │
+                                    ▼                         ▼
+                           vectors/brain.lance/       data/interpretations/
+                           (118K vectors, 493MB)      (focus, mood, themes, ...)
+                                    │                         │
+                                    └────────────┬────────────┘
+                                                 ▼
+                                        mcp_brain_server.py
+                                         (31 MCP tools)
+                                                 │
+                                                 ▼
+                                    Claude Code · Claude Desktop
+                                      Any MCP-compatible client
+```
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- Apple Silicon Mac recommended (MPS acceleration for embeddings)
+- [mcporter](https://github.com/nicobailey/mcporter) or any MCP client
+
+### 1. Clone & Setup
+
+```bash
+git clone https://github.com/mordechaipotash/intellectual-dna.git
+cd intellectual-dna
+
+# Create virtual environment
+python -m venv mcp-env
+source mcp-env/bin/activate
+
+# Install dependencies
+pip install duckdb lancedb nomic fastmcp pandas pyarrow
+```
+
+### 2. Prepare Your Data
+
+The system expects conversation data in parquet format. Export your conversations:
+
+```bash
+# Import ChatGPT export
+python -m pipelines import_chatgpt /path/to/conversations.json
+
+# Import Claude Code sessions
+python -m pipelines import_claude_code
+
+# Or bring your own parquet with columns: 
+# [message_id, conversation_id, role, content, created, source]
+```
+
+### 3. Embed & Index
+
+```bash
+# Generate embeddings (uses nomic-embed-text-v1.5 locally)
+python pipelines/embed_new_messages.py
+
+# Check stats
+python pipelines/embed_new_messages.py stats
+```
+
+### 4. Run the MCP Server
+
+```bash
+# Direct
+python mordelab/02-monotropic-prosthetic/mcp_brain_server.py
+
+# Or via mcporter config (~/.mcporter/mcporter.json):
+{
+  "brain": {
+    "command": "python",
+    "args": ["mordelab/02-monotropic-prosthetic/mcp_brain_server.py"],
+    "lifecycle": "keep-alive"
+  }
+}
+```
+
+### 5. Query Your Brain
 
 ```python
-# Find conceptually similar messages
-semantic_search("bottleneck as amplifier", limit=10)
+# Semantic search
+semantic_search("what do I think about productivity?", limit=10)
 
-# Track how an idea evolved
+# Track idea evolution
 thinking_trajectory("agency")
 
 # Time-travel to any month
 what_was_i_thinking("2024-08")
 
-# Compare recent vs historical positions
-find_contradictions("productivity")
-
-# Cross-source search (conversations + YouTube + GitHub)
+# Cross-source search
 unified_search("database optimization")
-
-# 151 weeks of narrative summaries
-query_weekly_summaries(month="2024-06")
-```
-
-## Daily Briefing Agent
-
-Runs at 6am. Surfaces what I'm circling, contradicting, stalling, forgetting:
-
-```markdown
-## Circling Themes
-- **brain** (573x) - you keep coming back to this
-- **design** (425x) - active focus area
-
-## Contradictions
-- **management**: Shifted from "strategic oversight" → "granular data management"
-
-## Stalled Projects
-- sparkii (mentioned but no commits in 30 days)
-
-## Summary
-[LLM-generated action items via Gemini Flash]
 ```
 
 ## Tech Stack
 
 | Component | Choice | Why |
 |-----------|--------|-----|
-| Vector DB | LanceDB | 32x smaller than DuckDB VSS, native incremental |
-| Embeddings | nomic-embed-text-v1.5 | 768 dims, local on Apple Silicon |
-| Analytics | DuckDB | Fast parquet queries, serverless |
-| Storage | Parquet | Columnar, compressed, portable |
-| Interface | MCP | Direct integration with Claude Code/Desktop |
-| Automation | launchd + hooks | Native macOS, zero external deps |
-| LLM (briefings) | Gemini 3 Flash | Fast, cheap synthesis |
+| Vector DB | **LanceDB** | 32x smaller than DuckDB VSS, native incremental, no index footguns |
+| Embeddings | **nomic-embed-text-v1.5** | 768d, runs locally on Apple Silicon via MPS |
+| Analytics | **DuckDB** | Fast SQL on parquet, serverless, zero config |
+| Storage | **Parquet** | Columnar, compressed, portable, ecosystem support |
+| Interface | **MCP (FastMCP)** | Direct integration with Claude Code/Desktop |
+| Automation | **launchd + hooks** | Native macOS scheduling, zero external deps |
+| Pipelines | **88 Python scripts** | Each pipeline is standalone, composable |
 
-## What I Learned
+## The SEED Principles
 
-1. **DuckDB VSS has footguns**: Accidentally created duplicate HNSW indexes. 14GB for 300MB of data. LanceDB just works.
-
-2. **Facts vs interpretations prevents rebuild nightmares**: Mixing raw data with derived analysis creates cascading corruption. Keep them separate.
-
-3. **Claude Code hooks are underused**: Auto-sync on session end = zero manual export forever.
-
-4. **Embeddings beat keywords**: "What was I thinking about agency?" finds relevant messages even when I never used that exact word.
-
-5. **Passive search isn't enough**: The brain needs to be proactive. Daily briefings surface what you'd never think to query.
-
-## The 8 SEED Principles
-
-Foundational mental models extracted from 359K messages:
+Eight foundational mental models extracted from 376K messages:
 
 | Principle | Core Idea |
 |-----------|-----------|
-| **INVERSION** | Reverse the problem - ask what prevents NOT-X |
+| **INVERSION** | Reverse the problem — ask what prevents NOT-X |
 | **COMPRESSION** | Reduce to essential while preserving decision quality |
 | **AGENCY** | 100% human control, 100% machine execution |
 | **BOTTLENECK** | Find the constraint, amplify it as leverage |
@@ -169,61 +340,54 @@ Foundational mental models extracted from 359K messages:
 ## Repository Structure
 
 ```
-intellectual_dna/
-├── data/
-│   ├── all_conversations.parquet    # 359K messages
-│   ├── youtube_rows.parquet         # 31K videos
-│   ├── github_commits.parquet       # 1.4K commits
-│   └── facts/brain/                 # L0-L2 onion layers
-├── vectors/
-│   └── brain.lance/                 # 106K embeddings (440MB)
-├── pipelines/
-│   ├── embed_messages.py            # Embedding pipeline
-│   ├── rebuild.py                   # Unified orchestrator
-│   └── migrate_to_lancedb.py        # DuckDB → LanceDB migration
+intellectual-dna/
+├── mordelab/02-monotropic-prosthetic/
+│   ├── mcp_brain_server.py          # MCP server (31 tools)
+│   └── SEED-MORDETROPIC-128KB-MASTER.json  # 8 principles
+├── pipelines/                        # 88 data pipelines
+│   ├── embed_new_messages.py         # Parquet → LanceDB vectors
+│   ├── sync_clawdbot.py             # Clawdbot sessions → parquet
+│   ├── sync_github.py               # GitHub repos + commits
+│   ├── harvest_markdown.py          # Markdown corpus builder
+│   ├── build_*.py                   # 50+ interpretation builders
+│   └── rebuild.py                   # Unified orchestrator
 ├── live/
 │   ├── sync.py                      # Auto-sync from Claude Code
-│   └── daily_briefing.py            # 6am briefing agent
-└── mordelab/02-monotropic-prosthetic/
-    └── mcp_brain_server.py          # MCP server (82 tools)
+│   └── daily_briefing.py            # Morning briefing agent
+├── data/                             # (gitignored)
+│   ├── facts/                        # Immutable source data
+│   │   └── brain/                    # L0-L3 onion layers
+│   └── interpretations/              # Derived, versioned analysis
+├── vectors/                          # (gitignored)
+│   └── brain.lance/                  # 118K vectors (493MB)
+├── config.py                         # Central configuration
+└── .claude/CLAUDE.md                 # Context engineering for Claude Code
 ```
 
-## The Paradox
+## Lessons Learned
 
-**Massive capability, invisible to the world.**
+1. **DuckDB VSS has footguns** — Accidentally created duplicate HNSW indexes. 14GB for 300MB of data. LanceDB just works.
 
-| Dimension | Reality |
-|-----------|---------|
-| Technical output | Team-level, solo |
-| AI fluency | 359K messages of practice |
-| Architecture | This system exists |
-| Visibility | You're reading this |
+2. **Facts vs Interpretations prevents rebuild nightmares** — Mixing raw data with derived analysis creates cascading corruption. Keep them separate.
 
-The work isn't more building. It's becoming visible.
+3. **Auto-sync beats manual export** — Claude Code stop hook triggers `sync.py`. New conversations flow in automatically. Zero friction = actually gets used.
 
-This README is part of that.
+4. **Embeddings beat keywords** — "What was I thinking about agency?" finds relevant messages even when you never used that exact word.
 
----
-
-## Work With Me
-
-Open to async contract work:
-
-- Context engineering & CLAUDE.md architecture
-- MCP server development
-- AI orchestration systems
-
-Reach out: [GitHub](https://github.com/mordechaipotash) · [Reddit](https://reddit.com/u/Signal_Usual8630)
-
----
+5. **88 pipelines > 1 monolith** — Each pipeline is a standalone script. Easy to run, debug, or replace individually.
 
 ## Related Projects
 
-- [brain-canvas](https://github.com/mordechaipotash/brain-canvas) - Give any LLM its own display (`npx brain-canvas`)
-- [youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline) - 31K+ videos, transcribed
-- [python-data-engineering-portfolio](https://github.com/mordechaipotash/python-data-engineering-portfolio) - 1,059 production scripts
-- [seedgarden](https://github.com/mordechaipotash/seedgarden) - The SHELET Protocol for AI-human interfaces
+- **[brain-canvas](https://github.com/mordechaipotash/brain-canvas)** — Give any LLM its own display (`npx brain-canvas`)
+- **[youtube-transcription-pipeline](https://github.com/mordechaipotash/youtube-transcription-pipeline)** — 31K+ videos, transcribed
+- **[seedgarden](https://github.com/mordechaipotash/seedgarden)** — The SHELET Protocol for AI-human interfaces
+
+## Work With Me
+
+Open to async contract work in context engineering, MCP server development, and AI orchestration systems.
+
+[GitHub](https://github.com/mordechaipotash) · [Reddit](https://reddit.com/u/Signal_Usual8630)
 
 ---
 
-*Built by [Mordechai Potash](https://github.com/mordechaipotash)*
+*Built by [Mordechai Potash](https://github.com/mordechaipotash) — a monotropic polymath who needed a system that works with deep focus, not against it.*
