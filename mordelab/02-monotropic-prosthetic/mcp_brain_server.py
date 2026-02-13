@@ -6,7 +6,7 @@ Core data sources:
 - 353K conversation messages (2023-2025) in DuckDB/Parquet
 - 106K embedded messages with semantic search (768-dim nomic)
 - 8 SEED principles (foundational mental models)
-- 31K YouTube videos (consumption patterns)
+- GitHub repos + commits (live-synced daily)
 - GitHub repos + commits (code history)
 
 Start: ./mcp-env/bin/python mcp_brain_server.py
@@ -28,13 +28,15 @@ from config import (
     PARQUET_PATH as CONVERSATIONS_PARQUET,
     EMBEDDINGS_DB,
     LANCE_PATH,
-    YOUTUBE_PARQUET,
     GITHUB_REPOS_PARQUET,
     GITHUB_COMMITS_PARQUET,
     MARKDOWN_PARQUET,
     SEED_PATH as SEED_FILE,
     EMBEDDING_MODEL,
     EMBEDDING_DIM,
+    SUMMARIES_V6_PARQUET,
+    SUMMARIES_V6_LANCE,
+    SUMMARIES_V6_TABLE,
 )
 
 # Embedding model - PRE-WARMED at server startup for instant queries
@@ -74,7 +76,7 @@ mcp = FastMCP(
     - 353K raw conversation messages (2023-2025)
     - 106K embedded messages with semantic search
     - 8 SEED principles (foundational mental models)
-    - 31K YouTube videos (consumption patterns)
+    - GitHub repos + commits (live-synced daily)
     - GitHub repos + commits (code history)
 
     Use these tools to understand what Mordechai thinks, find precedents,
@@ -90,7 +92,6 @@ _conversations_db = None
 _embeddings_db = None
 _lance_db = None  # LanceDB for vector search (2026 migration)
 _github_db = None
-_youtube_db = None
 _interpretations_db = None
 _markdown_db = None
 
@@ -179,6 +180,40 @@ def lance_count(table: str = "message") -> int:
         return 0
 
 
+_summaries_lance = None
+_summaries_db = None
+
+def get_summaries_lance():
+    """LanceDB for v6 summary vectors."""
+    global _summaries_lance
+    if _summaries_lance is None:
+        _summaries_lance = lancedb.connect(str(SUMMARIES_V6_LANCE))
+    return _summaries_lance
+
+def get_summaries_db():
+    """DuckDB for v6 summary parquet queries."""
+    global _summaries_db
+    if _summaries_db is None:
+        _summaries_db = duckdb.connect()
+        _summaries_db.execute(f"""
+            CREATE VIEW IF NOT EXISTS summaries
+            AS SELECT * FROM read_parquet('{SUMMARIES_V6_PARQUET}')
+        """)
+    return _summaries_db
+
+def _parse_json_field(value):
+    """Safely parse a JSON string field from parquet. Returns list or empty list."""
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return parsed
+        return [str(parsed)]
+    except (json.JSONDecodeError, TypeError):
+        return [str(value)] if value else []
+
+
 def get_github_db():
     """Get cached DuckDB connection for GitHub data."""
     global _github_db
@@ -191,13 +226,7 @@ def get_github_db():
     return _github_db
 
 
-def get_youtube_db():
-    """Get cached DuckDB connection for YouTube data."""
-    global _youtube_db
-    if _youtube_db is None and YOUTUBE_PARQUET.exists():
-        _youtube_db = duckdb.connect()
-        _youtube_db.execute(f"CREATE VIEW IF NOT EXISTS youtube AS SELECT * FROM read_parquet('{YOUTUBE_PARQUET}')")
-    return _youtube_db
+# get_youtube_db() — REMOVED 2026-02-05
 
 
 def get_interpretations_db():
@@ -289,13 +318,35 @@ def get_principle(name: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @mcp.tool()
-def search_conversations(term: str, limit: int = 15, role: str = None) -> str:
+def search_conversations(term: str = "", limit: int = 15, role: str = None) -> str:
     """
-    Full-text search across 247K conversation messages.
-    Optionally filter by role ('user' for Mordechai's words, 'assistant' for AI responses).
-    Returns previews with conversation context.
+    Full-text search across all conversation messages.
+
+    Args:
+        term: Search term (keyword). If empty with role="user", finds recent user questions.
+        limit: Max results (default 15)
+        role: Filter by role — "user" for Mordechai's words, "assistant" for AI responses.
+              With role="user" and empty term, returns recent questions asked (was find_user_questions).
     """
     con = get_conversations()
+
+    # Special mode: find recent user questions when no term and role=user
+    if (not term or not term.strip()) and role == "user":
+        results = con.execute("""
+            SELECT substr(content, 1, 200) as question,
+                   conversation_title, source, created
+            FROM conversations
+            WHERE has_question = 1 AND role = 'user'
+            ORDER BY created DESC
+            LIMIT ?
+        """, [limit]).fetchall()
+
+        output = ["## Recent Questions Asked\n"]
+        for question, title, source, created in results:
+            output.append(f"**[{created}]** {question}")
+            output.append(f"  _From: {title or 'Untitled'} ({source})_\n")
+        return "\n".join(output)
+
     pattern = f"%{term}%"
 
     # Parameterized query to prevent SQL injection
@@ -324,9 +375,9 @@ def search_conversations(term: str, limit: int = 15, role: str = None) -> str:
         return f"No conversations found containing '{term}'"
 
     output = [f"## Conversations containing '{term}' ({len(results)} found)\n"]
-    for source, model, title, role, preview, created, conv_id in results:
+    for source, model, title, msg_role, preview, created, conv_id in results:
         output.append(f"**[{created}]** {title or 'Untitled'}")
-        output.append(f"  {role}: {preview}...")
+        output.append(f"  {msg_role}: {preview}...")
         output.append(f"  _ID: {conv_id[:20]}... | {source}/{model}_\n")
     return "\n".join(output)
 
@@ -362,27 +413,7 @@ def get_conversation(conversation_id: str) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def find_user_questions(limit: int = 20) -> str:
-    """
-    Find questions Mordechai has asked across all conversations.
-    Useful for understanding his inquiry patterns.
-    """
-    con = get_conversations()
-    results = con.execute("""
-        SELECT substr(content, 1, 200) as question,
-               conversation_title, source, created
-        FROM conversations
-        WHERE has_question = 1 AND role = 'user'
-        ORDER BY created DESC
-        LIMIT ?
-    """, [limit]).fetchall()
-
-    output = ["## Recent Questions Asked\n"]
-    for question, title, source, created in results:
-        output.append(f"**[{created}]** {question}")
-        output.append(f"  _From: {title or 'Untitled'} ({source})_\n")
-    return "\n".join(output)
+# find_user_questions — MERGED into search_conversations(term="", role="user")
 
 
 @mcp.tool()
@@ -410,35 +441,35 @@ def conversations_by_date(date: str, limit: int = 30) -> str:
 
 
 @mcp.tool()
-def brain_stats(source: str = "all") -> str:
+def brain_stats(view: str = "overview") -> str:
     """
-    Get statistics about brain data sources.
+    Brain overview, domain distribution, and thinking pulse.
 
     Args:
-        source: Which source to show stats for. Options:
-            - "all" (default): Overview of all sources
+        view: What to display:
+            - "overview" (default): Stats across all data sources
+            - "domains": Domain breakdown with counts, %, breakthroughs, top concepts (was domain_map)
+            - "pulse": Domain × thinking_stage matrix — what's crystallizing vs exploring (was thinking_pulse)
             - "conversations": Detailed conversation stats
             - "embeddings": Embedding coverage stats
             - "github": Repository and commit stats
-            - "youtube": Video viewing stats
-            - "google": Search and visit stats
             - "markdown": Document corpus stats
     """
-    source = source.lower().strip()
+    view = view.lower().strip()
 
-    if source == "conversations":
+    if view == "domains":
+        return _domain_map_view()
+    elif view == "pulse":
+        return _thinking_pulse_view()
+    elif view == "conversations":
         return _conversation_stats()
-    elif source == "embeddings":
+    elif view == "embeddings":
         return _embedding_stats()
-    elif source == "github":
+    elif view == "github":
         return _github_stats()
-    elif source == "youtube":
-        return _youtube_stats()
-    elif source == "google":
-        return _google_stats()
-    elif source == "markdown":
+    elif view == "markdown":
         return _markdown_stats()
-    elif source == "all":
+    elif view == "overview":
         # Quick overview of all sources
         output = ["## Brain Data Overview\n"]
 
@@ -461,6 +492,40 @@ def brain_stats(source: str = "all") -> str:
         except:
             output.append("**Embeddings**: unavailable")
 
+        # v6 Summaries
+        try:
+            sdb = get_summaries_db()
+            v6_total = sdb.execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
+            v6_breakthroughs = sdb.execute("SELECT COUNT(*) FROM summaries WHERE importance = 'breakthrough'").fetchone()[0]
+            v6_decisions = sdb.execute("SELECT COUNT(*) FROM summaries WHERE decisions IS NOT NULL AND decisions != '[]' AND decisions NOT LIKE '%none identified%'").fetchone()[0]
+            v6_open_q = sdb.execute("SELECT COUNT(*) FROM summaries WHERE open_questions IS NOT NULL AND open_questions != '[]' AND open_questions NOT LIKE '%none identified%'").fetchone()[0]
+            output.append(f"**v6 Summaries**: {v6_total:,} conversations summarized")
+            output.append(f"  - {v6_breakthroughs:,} breakthroughs | {v6_decisions:,} with decisions | {v6_open_q:,} with open questions")
+
+            # Domain distribution (top 10)
+            domains = sdb.execute("""
+                SELECT domain_primary, COUNT(*) as cnt
+                FROM summaries
+                GROUP BY domain_primary
+                ORDER BY cnt DESC
+                LIMIT 10
+            """).fetchall()
+            if domains:
+                output.append("  - **Top domains**: " + ", ".join(f"{d[0]} ({d[1]})" for d in domains))
+
+            # Thinking stage distribution
+            stages = sdb.execute("""
+                SELECT thinking_stage, COUNT(*) as cnt
+                FROM summaries
+                WHERE thinking_stage IS NOT NULL
+                GROUP BY thinking_stage
+                ORDER BY cnt DESC
+            """).fetchall()
+            if stages:
+                output.append("  - **Thinking stages**: " + ", ".join(f"{s[0]} ({s[1]})" for s in stages))
+        except:
+            output.append("**v6 Summaries**: unavailable")
+
         # GitHub
         try:
             if GITHUB_REPOS_PARQUET.exists():
@@ -468,30 +533,6 @@ def brain_stats(source: str = "all") -> str:
                 repos = gdb.execute("SELECT COUNT(*) FROM github_repos").fetchone()[0]
                 commits = gdb.execute("SELECT COUNT(*) FROM github_commits").fetchone()[0] if GITHUB_COMMITS_PARQUET.exists() else 0
                 output.append(f"**GitHub**: {repos} repos, {commits:,} commits")
-        except:
-            pass
-
-        # YouTube
-        try:
-            if YOUTUBE_PARQUET.exists():
-                ydb = get_youtube_db()
-                vids = ydb.execute("SELECT COUNT(*) FROM youtube").fetchone()[0]
-                watched = ydb.execute("SELECT COUNT(*) FROM youtube WHERE watched_date IS NOT NULL").fetchone()[0]
-                output.append(f"**YouTube**: {vids:,} videos ({watched:,} watched)")
-        except:
-            pass
-
-        # Google
-        try:
-            searches_path = DATA_DIR / "google_searches.parquet"
-            visits_path = DATA_DIR / "google_visits.parquet"
-            idb = get_interpretations_db()
-            if searches_path.exists():
-                searches = idb.execute(f"SELECT COUNT(*) FROM '{searches_path}'").fetchone()[0]
-                output.append(f"**Google Searches**: {searches:,}")
-            if visits_path.exists():
-                visits = idb.execute(f"SELECT COUNT(*) FROM '{visits_path}'").fetchone()[0]
-                output.append(f"**Google Visits**: {visits:,}")
         except:
             pass
 
@@ -504,10 +545,10 @@ def brain_stats(source: str = "all") -> str:
         except:
             pass
 
-        output.append("\n_Use brain_stats('source') for details on specific source_")
+        output.append("\n_Use brain_stats(view='...') for details. Views: overview, domains, pulse, conversations, embeddings, github, markdown_")
         return "\n".join(output)
     else:
-        return f"Unknown source: {source}. Use: all, conversations, embeddings, github, youtube, google, markdown"
+        return f"Unknown view: {view}. Use: overview, domains, pulse, conversations, embeddings, github, markdown"
 
 
 def _conversation_stats() -> str:
@@ -642,13 +683,8 @@ def what_was_i_thinking(month: str) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def concept_velocity(term: str, granularity: str = "month") -> str:
-    """
-    Track how often a concept appears over time.
-    Shows acceleration/deceleration of ideas.
-    Granularity: 'month' or 'quarter'
-    """
+def _concept_velocity_view(term: str, granularity: str = "month") -> str:
+    """Internal: Track how often a concept appears over time."""
     con = get_conversations()
 
     if granularity == "quarter":
@@ -707,12 +743,8 @@ def concept_velocity(term: str, granularity: str = "month") -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def first_mention(term: str) -> str:
-    """
-    Find when a concept first appeared in your conversations.
-    Shows the genesis moment of an idea.
-    """
+def _first_mention_view(term: str) -> str:
+    """Internal: Find when a concept first appeared."""
     con = get_conversations()
     pattern = f"%{term}%"
 
@@ -780,72 +812,151 @@ def first_mention(term: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @mcp.tool()
-def what_do_i_think(topic: str) -> str:
+def what_do_i_think(topic: str, mode: str = "synthesize") -> str:
     """
-    Synthesize what Mordechai thinks about a topic.
-    Combines semantic search with keyword matches.
-    Returns both conceptually similar and exact mentions.
+    Synthesize what Mordechai thinks about a topic, or find similar past situations.
+
+    Args:
+        topic: The topic or situation to analyze
+        mode: Analysis mode:
+            - "synthesize" (default): Full synthesis with decisions, open questions, quotes
+            - "precedent": Find similar past situations with context and decisions made (was find_precedent)
     """
+    if mode == "precedent":
+        return _find_precedent_view(topic)
     output = [f"## What do I think about: {topic}\n"]
 
-    # 1. SEMANTIC SEARCH (conceptually related) - LanceDB
-    embedding = get_embedding(topic)
-    if embedding and LANCE_PATH.exists():
-        semantic_results = lance_search(embedding, limit=5, min_sim=0.3)
-        if semantic_results:
-            output.append("### Semantically Related Thoughts:\n")
-            for title, content, year, month, sim in semantic_results:
-                preview = content[:250] + "..." if len(content) > 250 else content
-                output.append(f"**[{year}-{month:02d}]** {title or 'Untitled'} (sim: {sim:.2f})")
-                output.append(f"> {preview}\n")
+    # Vector search v6 summaries
+    embedding = get_embedding(f"search_query: {topic}")
+    if not embedding:
+        return "Could not generate embedding for topic."
 
-    # 2. KEYWORD SEARCH (exact mentions)
-    con = get_conversations()
-    pattern = f"%{topic}%"
-    conv_results = con.execute("""
-        SELECT substr(content, 1, 300) as preview, created, conversation_title
-        FROM conversations
-        WHERE content ILIKE ? AND role = 'user'
-        ORDER BY created DESC LIMIT 10
-    """, [pattern]).fetchall()
+    try:
+        tbl = get_summaries_lance().open_table(SUMMARIES_V6_TABLE)
+        results = tbl.search(embedding).limit(20).to_list()
+    except Exception as e:
+        return f"Summary search error: {e}"
 
-    if conv_results:
-        output.append("\n### Direct Mentions:\n")
-        for preview, created, title in conv_results:
-            output.append(f"**[{created}]** _{title or 'Untitled'}_")
-            output.append(f"{preview}...\n")
+    if not results:
+        output.append("_No structured thoughts found on this topic._")
+        return "\n".join(output)
 
-    if len(output) == 1:
-        output.append("_No thoughts found on this topic._")
+    # Prioritize breakthrough > significant > routine
+    importance_order = {"breakthrough": 0, "significant": 1, "routine": 2}
+    results.sort(key=lambda r: importance_order.get(r.get("importance", "routine"), 2))
+
+    # Collect structured data
+    all_decisions = []
+    all_open_questions = []
+    all_quotables = []
+    summaries_shown = 0
+
+    output.append("### Summary of Thinking\n")
+    for r in results[:10]:
+        title = r.get("title", "Untitled") or "Untitled"
+        summary = r.get("summary", "")
+        importance = r.get("importance", "?")
+        domain = r.get("domain_primary", "?")
+        stage = r.get("thinking_stage", "?")
+        conv_id = r.get("conversation_id", "?")
+
+        if summary and summaries_shown < 5:
+            imp_icon = {"breakthrough": "🔥", "significant": "⭐", "routine": "📝"}.get(importance, "📝")
+            output.append(f"{imp_icon} **{title}** [{domain} | {stage}]")
+            output.append(f"> {summary[:300]}{'...' if len(summary) > 300 else ''}")
+            output.append(f"_ID: {conv_id[:20]}..._\n")
+            summaries_shown += 1
+
+        # Collect decisions
+        decisions = _parse_json_field(r.get("decisions"))
+        for d in decisions:
+            if d and "none identified" not in str(d).lower():
+                all_decisions.append((d, title, conv_id))
+
+        # Collect open questions
+        questions = _parse_json_field(r.get("open_questions"))
+        for q in questions:
+            if q and "none identified" not in str(q).lower():
+                all_open_questions.append((q, title, conv_id))
+
+        # Collect quotables
+        quotes = _parse_json_field(r.get("quotable"))
+        for q in quotes:
+            if q and "none identified" not in str(q).lower():
+                all_quotables.append((q, title))
+
+    # Key Decisions
+    if all_decisions:
+        output.append("### Key Decisions\n")
+        seen = set()
+        for decision, title, _ in all_decisions[:10]:
+            d_key = decision[:80].lower()
+            if d_key not in seen:
+                seen.add(d_key)
+                output.append(f"- {decision[:200]}")
+                output.append(f"  _From: {title}_")
+
+    # Still Open
+    if all_open_questions:
+        output.append("\n### Still Open\n")
+        seen = set()
+        for question, title, _ in all_open_questions[:8]:
+            q_key = question[:80].lower()
+            if q_key not in seen:
+                seen.add(q_key)
+                output.append(f"- {question[:200]}")
+                output.append(f"  _From: {title}_")
+
+    # Authentic Quotes
+    if all_quotables:
+        output.append("\n### Authentic Quotes\n")
+        for quote, title in all_quotables[:5]:
+            output.append(f"> \"{quote[:250]}\"")
+            output.append(f"> — _{title}_\n")
 
     return "\n".join(output)
 
 
-@mcp.tool()
-def find_precedent(situation: str) -> str:
-    """
-    Find similar situations Mordechai has dealt with before.
-    Searches both semantic embeddings and conversation history.
-    """
-    # Search conversations for similar situations
-    con = get_conversations()
-    pattern = f"%{situation}%"
-    results = con.execute("""
-        SELECT conversation_title, substr(content, 1, 300) as preview,
-               created, conversation_id
-        FROM conversations
-        WHERE content ILIKE ? AND role = 'user'
-        ORDER BY created DESC
-        LIMIT 15
-    """, [pattern]).fetchall()
+def _find_precedent_view(situation: str) -> str:
+    """Internal: Find similar situations Mordechai has dealt with before."""
+    embedding = get_embedding(f"search_query: {situation}")
+    if not embedding:
+        return "Could not generate embedding."
+
+    try:
+        tbl = get_summaries_lance().open_table(SUMMARIES_V6_TABLE)
+        results = tbl.search(embedding).limit(15).to_list()
+    except Exception as e:
+        return f"Search error: {e}"
 
     if not results:
         return f"No precedents found for: {situation}"
 
     output = [f"## Precedents for: {situation}\n"]
-    for title, preview, created, conv_id in results:
-        output.append(f"**[{created}]** {title or 'Untitled'}")
-        output.append(f"{preview}...")
+    output.append(f"_Found {len(results)} similar past situations_\n")
+
+    for i, r in enumerate(results[:10]):
+        title = r.get("title", "Untitled") or "Untitled"
+        summary = r.get("summary", "")
+        importance = r.get("importance", "?")
+        domain = r.get("domain_primary", "?")
+        stage = r.get("thinking_stage", "?")
+        conv_id = r.get("conversation_id", "?")
+        source = r.get("source", "?")
+
+        imp_icon = {"breakthrough": "🔥", "significant": "⭐", "routine": "📝"}.get(importance, "📝")
+        output.append(f"### {i+1}. {imp_icon} {title}")
+        output.append(f"**Domain**: {domain} | **Stage**: {stage} | **Source**: {source}")
+        output.append(f"> {summary[:350]}{'...' if len(summary) > 350 else ''}")
+
+        # Show decisions if present
+        decisions = _parse_json_field(r.get("decisions"))
+        real_decisions = [d for d in decisions if d and "none identified" not in str(d).lower()]
+        if real_decisions:
+            output.append("**Decisions made**:")
+            for d in real_decisions[:3]:
+                output.append(f"  - {d[:150]}")
+
         output.append(f"_ID: {conv_id[:20]}..._\n")
 
     return "\n".join(output)
@@ -960,14 +1071,295 @@ def semantic_search(query: str, limit: int = 10) -> str:
 
 
 @mcp.tool()
-def search_ip_docs(query: str, limit: int = 10) -> str:
+def search_summaries(
+    query: str,
+    extract: str = "summary",
+    limit: int = 10,
+    domain: str = None,
+    importance: str = None,
+    thinking_stage: str = None,
+    source: str = None,
+    mode: str = "hybrid"
+) -> str:
     """
-    Search the distilled intellectual property documents (137 high-value docs).
-    These contain Mordechai's core frameworks: SHELET, MORDETROPIC, Bottleneck=Amplifier,
-    SeedGarden, 8 Principles, Translation Layer, Cognitive Prosthetics.
+    Search v6 conversation SUMMARIES with hybrid vector + keyword search.
 
-    Use this to find the original thinking and frameworks, not just conversation history.
+    This is the BEST search tool for finding conversations by topic, concept, or domain.
+    Searches structured summaries with 25 normalized domains, concepts, decisions, and insights.
+
+    Args:
+        query: Search query
+        extract: What to extract from results:
+            - "summary" (default): Full summary with metadata
+            - "questions": Open questions from matching conversations (was search_open_questions)
+            - "decisions": Decisions made in matching conversations (was search_decisions)
+            - "quotes": Quotable phrases from matching conversations (was quote_me)
+        limit: Max results (default 10)
+        domain: Filter by domain (e.g. "torah", "ai-dev", "wotc", "cognitive-architecture")
+        importance: Filter by importance ("breakthrough", "significant", "routine")
+        thinking_stage: Filter by stage ("exploring", "crystallizing", "refining", "executing")
+        source: Filter by source ("claude-code", "chatgpt", "clawdbot", "claude_desktop", "gemini")
+        mode: Search mode — "hybrid" (default), "vector", "fts"
+
+    Examples:
+        search_summaries("bottleneck amplifier", importance="breakthrough")
+        search_summaries("WOTC", extract="decisions")
+        search_summaries("Torah", extract="questions", domain="torah")
+        search_summaries("monotropic", extract="quotes")
     """
+    # Route to specialized extraction if needed
+    if extract == "questions":
+        return _extract_open_questions(query, domain=domain, importance=importance, thinking_stage=thinking_stage, source=source, limit=limit, mode=mode)
+    elif extract == "decisions":
+        return _extract_decisions(query, domain=domain, importance=importance, thinking_stage=thinking_stage, source=source, limit=limit, mode=mode)
+    elif extract == "quotes":
+        return _extract_quotes(query, domain=domain, importance=importance, thinking_stage=thinking_stage, source=source, limit=limit, mode=mode)
+    try:
+        tbl = get_summaries_lance().open_table(SUMMARIES_V6_TABLE)
+    except Exception as e:
+        return f"v6 summary table not found ({e}). Check brain_summaries.lance/summary exists."
+
+    # Build SQL filter
+    filters = []
+    if domain:
+        filters.append(f"domain_primary = '{domain}'")
+    if importance:
+        filters.append(f"importance = '{importance}'")
+    if thinking_stage:
+        filters.append(f"thinking_stage = '{thinking_stage}'")
+    if source:
+        filters.append(f"source = '{source}'")
+    where_clause = " AND ".join(filters) if filters else None
+
+    try:
+        if mode == "hybrid":
+            search = tbl.search(query, query_type="hybrid").limit(limit * 3)
+            if where_clause:
+                search = search.where(where_clause)
+            results = search.to_list()
+        elif mode == "fts":
+            search = tbl.search(query, query_type="fts").limit(limit)
+            if where_clause:
+                search = search.where(where_clause)
+            results = search.to_list()
+        else:
+            # Vector search
+            embedding = get_embedding(f"search_query: {query}")
+            if not embedding:
+                return "Could not generate embedding."
+            search = tbl.search(embedding).limit(limit)
+            if where_clause:
+                search = search.where(where_clause)
+            results = search.to_list()
+    except Exception:
+        # Fallback to vector-only (hybrid/fts may not have index)
+        embedding = get_embedding(f"search_query: {query}")
+        if not embedding:
+            return "Could not generate embedding."
+        search = tbl.search(embedding).limit(limit)
+        if where_clause:
+            search = search.where(where_clause)
+        results = search.to_list()
+
+    if not results:
+        return f"No summaries found for: {query}"
+
+    # Cross-encoder reranking (if available)
+    try:
+        from sentence_transformers import CrossEncoder
+        reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        pairs = [(query, r.get("summary", "")) for r in results]
+        scores = reranker.predict(pairs)
+        for i, r in enumerate(results):
+            r["rerank_score"] = float(scores[i])
+        results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+    except Exception:
+        pass  # Reranking optional
+
+    results = results[:limit]
+
+    output = [f"## Summary Search: '{query}'\n"]
+    if where_clause:
+        output.append(f"_Filters: {where_clause}_\n")
+    output.append(f"_Found {len(results)} matching conversation summaries_\n")
+
+    for i, r in enumerate(results):
+        title = (r.get("title") or "Untitled")[:80]
+        summary = (r.get("summary") or "")[:400]
+        imp = r.get("importance", "?")
+        domain_p = r.get("domain_primary", "?")
+        stage = r.get("thinking_stage", "?")
+        src = r.get("source", "?")
+        concepts_raw = _parse_json_field(r.get("concepts"))
+        concepts_str = ", ".join(concepts_raw[:8]) if concepts_raw else ""
+        rerank = r.get("rerank_score")
+        conv_id = r.get("conversation_id", "?")
+
+        imp_icon = {"breakthrough": "🔥", "significant": "⭐", "routine": "📝"}.get(imp, "📝")
+        output.append(f"### {i+1}. {imp_icon} {title}")
+        output.append(f"**Domain**: {domain_p} | **Stage**: {stage} | **Source**: {src} | **Importance**: {imp}")
+        if concepts_str:
+            output.append(f"**Concepts**: {concepts_str}")
+        if rerank is not None:
+            output.append(f"**Relevance**: {rerank:.2f} (reranked)")
+        output.append(f"> {summary}")
+        output.append(f"_Conversation ID: {conv_id}_\n")
+
+    return "\n".join(output)
+
+
+def _summary_search_core(query, domain=None, importance=None, thinking_stage=None, source=None, limit=10, mode="hybrid"):
+    """Shared search logic for all extract modes. Returns list of result dicts."""
+    try:
+        tbl = get_summaries_lance().open_table(SUMMARIES_V6_TABLE)
+    except Exception as e:
+        return []
+
+    filters = []
+    if domain:
+        filters.append(f"domain_primary = '{domain}'")
+    if importance:
+        filters.append(f"importance = '{importance}'")
+    if thinking_stage:
+        filters.append(f"thinking_stage = '{thinking_stage}'")
+    if source:
+        filters.append(f"source = '{source}'")
+    where_clause = " AND ".join(filters) if filters else None
+
+    try:
+        if mode == "hybrid":
+            search = tbl.search(query, query_type="hybrid").limit(limit * 3)
+            if where_clause:
+                search = search.where(where_clause)
+            return search.to_list()
+        elif mode == "fts":
+            search = tbl.search(query, query_type="fts").limit(limit * 2)
+            if where_clause:
+                search = search.where(where_clause)
+            return search.to_list()
+        else:
+            embedding = get_embedding(f"search_query: {query}")
+            if not embedding:
+                return []
+            search = tbl.search(embedding).limit(limit * 2)
+            if where_clause:
+                search = search.where(where_clause)
+            return search.to_list()
+    except Exception:
+        embedding = get_embedding(f"search_query: {query}")
+        if not embedding:
+            return []
+        search = tbl.search(embedding).limit(limit * 2)
+        if where_clause:
+            search = search.where(where_clause)
+        return search.to_list()
+
+
+def _extract_open_questions(query, **kwargs):
+    """Extract open questions from matching summaries."""
+    limit = kwargs.pop("limit", 20)
+    results = _summary_search_core(query, limit=limit, **kwargs)
+    if not results:
+        return f"No results found for: {query}"
+
+    output = [f"## Open Questions about: {query}\n"]
+    question_count = 0
+    for r in results:
+        questions = _parse_json_field(r.get("open_questions"))
+        real_questions = [q for q in questions if q and "none identified" not in str(q).lower()]
+        if not real_questions:
+            continue
+        title = r.get("title", "Untitled") or "Untitled"
+        domain_p = r.get("domain_primary", "?")
+        importance = r.get("importance", "?")
+        conv_id = r.get("conversation_id", "?")
+        summary = (r.get("summary") or "")[:150]
+        output.append(f"### {title}")
+        output.append(f"_Domain: {domain_p} | Importance: {importance} | ID: {conv_id[:20]}..._")
+        output.append(f"_Context: {summary}..._\n")
+        for q in real_questions:
+            output.append(f"  ❓ {q[:250]}")
+            question_count += 1
+        output.append("")
+        if question_count >= limit:
+            break
+    if question_count == 0:
+        output.append("_No open questions found matching this topic._")
+    else:
+        output.append(f"\n_Total: {question_count} open questions found_")
+    return "\n".join(output)
+
+
+def _extract_decisions(query, **kwargs):
+    """Extract decisions from matching summaries."""
+    limit = kwargs.pop("limit", 20)
+    results = _summary_search_core(query, limit=limit, **kwargs)
+    if not results:
+        return f"No results found for: {query}"
+
+    output = [f"## Decisions about: {query}\n"]
+    decision_count = 0
+    for r in results:
+        decisions = _parse_json_field(r.get("decisions"))
+        real_decisions = [d for d in decisions if d and "none identified" not in str(d).lower()]
+        if not real_decisions:
+            continue
+        title = r.get("title", "Untitled") or "Untitled"
+        domain_p = r.get("domain_primary", "?")
+        imp = r.get("importance", "?")
+        stage = r.get("thinking_stage", "?")
+        conv_id = r.get("conversation_id", "?")
+        source = r.get("source", "?")
+        imp_icon = {"breakthrough": "🔥", "significant": "⭐", "routine": "📝"}.get(imp, "📝")
+        output.append(f"### {imp_icon} {title}")
+        output.append(f"_Domain: {domain_p} | Stage: {stage} | Source: {source}_")
+        for d in real_decisions:
+            output.append(f"  ✅ {d[:250]}")
+            decision_count += 1
+        output.append(f"_ID: {conv_id[:20]}..._\n")
+        if decision_count >= limit:
+            break
+    if decision_count == 0:
+        output.append("_No decisions found matching this topic._")
+    else:
+        output.append(f"\n_Total: {decision_count} decisions found_")
+    return "\n".join(output)
+
+
+def _extract_quotes(query, **kwargs):
+    """Extract quotable phrases from matching summaries."""
+    limit = kwargs.pop("limit", 10)
+    results = _summary_search_core(query, limit=limit, **kwargs)
+    if not results:
+        return f"No results found for: {query}"
+
+    output = [f"## Quotes from Mordechai on: {query}\n"]
+    quote_count = 0
+    for r in results:
+        quotes = _parse_json_field(r.get("quotable"))
+        real_quotes = [q for q in quotes if q and "none identified" not in str(q).lower()]
+        if not real_quotes:
+            continue
+        title = r.get("title", "Untitled") or "Untitled"
+        domain_p = r.get("domain_primary", "?")
+        source = r.get("source", "?")
+        for q in real_quotes:
+            output.append(f"> \"{q[:300]}\"")
+            output.append(f"> — _{title}_ ({domain_p}, {source})\n")
+            quote_count += 1
+            if quote_count >= limit:
+                break
+        if quote_count >= limit:
+            break
+    if quote_count == 0:
+        output.append("_No quotable phrases found matching this topic._")
+    else:
+        output.append(f"_Total: {quote_count} quotes found_")
+    return "\n".join(output)
+
+
+def _search_ip_docs_view(query: str, limit: int = 10) -> str:
+    """Internal: Vector search on curated IP documents."""
     if not LANCE_PATH.exists():
         return "LanceDB not found. Run migrate_to_lancedb.py first."
 
@@ -1009,15 +1401,21 @@ def search_ip_docs(query: str, limit: int = 10) -> str:
 
 
 @mcp.tool()
-def thinking_trajectory(topic: str) -> str:
+def thinking_trajectory(topic: str, view: str = "full") -> str:
     """
     Track the evolution of thinking about a topic over time.
-    Combines semantic search with temporal analysis to show
-    how ideas developed, when interest peaked, and what
-    related concepts emerged alongside.
 
-    This is the most powerful tool for understanding intellectual evolution.
+    Args:
+        topic: The concept/term to track
+        view: What to show:
+            - "full" (default): Complete trajectory with genesis, temporal pattern, semantic matches, thinking stages
+            - "velocity": How often the concept appears over time with trend analysis (was concept_velocity)
+            - "first": When the concept first appeared — the genesis moment (was first_mention)
     """
+    if view == "velocity":
+        return _concept_velocity_view(topic)
+    elif view == "first":
+        return _first_mention_view(topic)
     output = [f"## Thinking Trajectory: '{topic}'\n"]
 
     # 1. Get semantic matches from embeddings - LanceDB
@@ -1089,6 +1487,38 @@ def thinking_trajectory(topic: str) -> str:
             for title, preview, sim in items[:2]:
                 output.append(f"  - [{sim:.2f}] {title or 'Untitled'}: {preview}...")
 
+    # 5. v6 Thinking Stage Progression
+    try:
+        v6_embedding = get_embedding(f"search_query: {topic}")
+        if v6_embedding:
+            tbl = get_summaries_lance().open_table(SUMMARIES_V6_TABLE)
+            v6_results = tbl.search(v6_embedding).limit(20).to_list()
+            if v6_results:
+                stage_order = {"exploring": 0, "crystallizing": 1, "refining": 2, "executing": 3}
+                stage_items = []
+                for r in v6_results:
+                    stage = r.get("thinking_stage", "")
+                    if stage in stage_order:
+                        stage_items.append((
+                            stage_order[stage],
+                            stage,
+                            r.get("title", "Untitled") or "Untitled",
+                            r.get("importance", "?"),
+                            r.get("domain_primary", "?")
+                        ))
+                if stage_items:
+                    stage_items.sort(key=lambda x: x[0])
+                    output.append("\n### Thinking Stage Progression (v6)")
+                    stage_icons = {"exploring": "🔍", "crystallizing": "💎", "refining": "🔧", "executing": "🚀"}
+                    current_stage = None
+                    for _, stage, title, imp, domain in stage_items:
+                        if stage != current_stage:
+                            current_stage = stage
+                            output.append(f"\n{stage_icons.get(stage, '📝')} **{stage.upper()}**")
+                        output.append(f"  - {title} [{domain} | {imp}]")
+    except Exception:
+        pass
+
     if not (temporal_dist or semantic_results):
         output.append("_No trajectory data found for this topic._")
 
@@ -1149,12 +1579,29 @@ def get_github_commits_df():
 
 
 @mcp.tool()
-def github_project_timeline(project_name: str) -> str:
+def github_search(query: str = "", project: str = None, mode: str = "timeline", limit: int = 10) -> str:
     """
-    Get project creation date, commit history, activity windows.
-    Shows when a GitHub project was created and its development timeline.
-    Useful for validating conversation dates and understanding project context.
+    Search GitHub repos, commits, and cross-reference with conversations.
+
+    Args:
+        query: Search query (used for code semantic search or as conversation_id for validate mode)
+        project: Project/repo name (used for timeline and conversations modes)
+        mode: Search mode:
+            - "timeline" (default): Project creation date, commits, activity windows (was github_project_timeline)
+            - "conversations": Find conversations mentioning a project (was conversation_project_context)
+            - "code": Semantic search across commits AND conversations (was code_to_conversation)
+            - "validate": Check conversation date validity via GitHub evidence. Pass conversation_id as query (was validate_date_with_github)
+        limit: Max results (default 10)
     """
+    if mode == "conversations":
+        return _conversation_project_context_view(project or query, limit)
+    elif mode == "code":
+        return _code_to_conversation_view(query, limit)
+    elif mode == "validate":
+        return _validate_date_with_github_view(query)
+
+    # Default: timeline mode
+    project_name = project or query
     if not GITHUB_REPOS_PARQUET.exists():
         return "GitHub data not imported. Run import_github_data.py first."
 
@@ -1221,13 +1668,8 @@ def github_project_timeline(project_name: str) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def conversation_project_context(project: str, limit: int = 10) -> str:
-    """
-    Find conversations mentioning a specific GitHub project.
-    Cross-references conversation content with project names.
-    Helps understand what was discussed about a project.
-    """
+def _conversation_project_context_view(project: str, limit: int = 10) -> str:
+    """Internal: Find conversations mentioning a specific GitHub project."""
     con = get_conversations()
     pattern = f"%{project.lower()}%"
 
@@ -1283,13 +1725,8 @@ def conversation_project_context(project: str, limit: int = 10) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def code_to_conversation(query: str, limit: int = 10) -> str:
-    """
-    Semantic search across BOTH commits and conversations.
-    Links code decisions to design discussions.
-    Finds conceptually related content across code and chat history.
-    """
+def _code_to_conversation_view(query: str, limit: int = 10) -> str:
+    """Internal: Semantic search across BOTH commits and conversations."""
     embedding = get_embedding(query)
     if not embedding:
         return "Could not generate embedding. Is Ollama running?"
@@ -1334,13 +1771,8 @@ def code_to_conversation(query: str, limit: int = 10) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def validate_date_with_github(conversation_id: str) -> str:
-    """
-    Check if a conversation date is valid based on GitHub evidence.
-    Uses project mentions and GitHub repo creation dates to validate timestamps.
-    Identifies potentially mislabeled conversation dates.
-    """
+def _validate_date_with_github_view(conversation_id: str) -> str:
+    """Internal: Check conversation date validity via GitHub evidence."""
     import re
 
     con = get_conversations()
@@ -1532,195 +1964,8 @@ def _github_stats() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# YOUTUBE TOOLS (consumption patterns - what you watched)
-# Uses get_youtube_db() from CONNECTION MANAGEMENT above
-# ═══════════════════════════════════════════════════════════════════════════════
+# YOUTUBE TOOLS — REMOVED 2026-02-05 (static data, not live-synced)
 
-
-@mcp.tool()
-def youtube_search(query: str, limit: int = 15) -> str:
-    """
-    Search 31K YouTube videos you've watched by keyword.
-    Searches titles, channel names, and transcripts.
-    Shows what content you were consuming about a topic.
-    """
-    if not YOUTUBE_PARQUET.exists():
-        return "YouTube data not found. Export youtube_rows.parquet first."
-
-    con = get_youtube_db()
-    pattern = f"%{query}%"
-
-    results = con.execute("""
-        SELECT
-            title,
-            channel_name,
-            youtube_id,
-            watched_date,
-            watch_count,
-            CASE WHEN full_transcript IS NOT NULL THEN length(full_transcript) ELSE 0 END as transcript_len,
-            view_count,
-            duration
-        FROM youtube
-        WHERE title ILIKE ?
-           OR channel_name ILIKE ?
-           OR full_transcript ILIKE ?
-        ORDER BY watched_date DESC NULLS LAST
-        LIMIT ?
-    """, [pattern, pattern, pattern, limit]).fetchall()
-
-    if not results:
-        return f"No YouTube videos found matching '{query}'"
-
-    output = [f"## YouTube Videos: '{query}' ({len(results)} found)\n"]
-    for title, channel, yt_id, watched, watch_count, transcript_len, views, duration in results:
-        duration_str = f"{duration//60}:{duration%60:02d}" if duration else "?"
-        transcript_marker = "📝" if transcript_len and transcript_len > 100 else ""
-        watch_info = f"(watched {watch_count}x)" if watch_count and watch_count > 1 else ""
-
-        output.append(f"**{title or 'Untitled'}** {transcript_marker}")
-        output.append(f"  📺 {channel or 'Unknown'} | ⏱️ {duration_str} | 👁️ {views or 0:,}")
-        output.append(f"  🗓️ {str(watched)[:10] if watched else 'Unknown'} {watch_info}")
-        output.append(f"  🔗 https://youtube.com/watch?v={yt_id}\n")
-
-    return "\n".join(output)
-
-
-@mcp.tool()
-def youtube_semantic_search(query: str, limit: int = 10) -> str:
-    """
-    Search YouTube videos with transcript focus.
-    Currently uses keyword matching on transcripts (768 vs 1024 dim mismatch).
-    Prioritizes videos with transcripts for deeper content matching.
-
-    Note: True semantic search pending re-embedding YouTube with nomic model.
-    """
-    if not YOUTUBE_PARQUET.exists():
-        return "YouTube data not found."
-
-    # Get query embedding (need to use a compatible model)
-    # YouTube uses 1024-dim embeddings, we have 768-dim from nomic
-    # For now, we'll use keyword search as fallback until embeddings are aligned
-    embedding = get_embedding(query)
-    if not embedding:
-        return "Could not generate embedding. Is Ollama running?"
-
-    # Since embedding dimensions don't match (768 vs 1024), use DuckDB's text search
-    # TODO: Re-embed YouTube with nomic-embed-text for compatibility
-    con = get_youtube_db()
-    pattern = f"%{query}%"
-
-    # Use full-text search on transcripts as semantic proxy
-    results = con.execute("""
-        SELECT
-            title,
-            channel_name,
-            youtube_id,
-            watched_date,
-            substr(full_transcript, 1, 300) as transcript_preview,
-            view_count,
-            duration
-        FROM youtube
-        WHERE full_transcript IS NOT NULL
-          AND length(full_transcript) > 100
-          AND (full_transcript ILIKE ? OR title ILIKE ?)
-        ORDER BY watched_date DESC NULLS LAST
-        LIMIT ?
-    """, [pattern, pattern, limit]).fetchall()
-
-    if not results:
-        return f"No videos with transcripts found matching '{query}'. Note: True semantic search requires re-embedding with compatible model."
-
-    output = [f"## YouTube Semantic Search: '{query}'\n"]
-    output.append("_Note: Using transcript keyword matching. Full vector search requires embedding alignment._\n")
-
-    for title, channel, yt_id, watched, transcript, views, duration in results:
-        duration_str = f"{duration//60}:{duration%60:02d}" if duration else "?"
-        output.append(f"**{title or 'Untitled'}**")
-        output.append(f"  📺 {channel or 'Unknown'} | ⏱️ {duration_str} | 👁️ {views or 0:,}")
-        output.append(f"  🗓️ {str(watched)[:10] if watched else 'Unknown'}")
-        if transcript:
-            output.append(f"  > {transcript}...")
-        output.append(f"  🔗 https://youtube.com/watch?v={yt_id}\n")
-
-    return "\n".join(output)
-
-
-def _youtube_stats() -> str:
-    """Internal: Get statistics about YouTube viewing patterns."""
-    if not YOUTUBE_PARQUET.exists():
-        return "YouTube data not found."
-
-    con = get_youtube_db()
-
-    # Basic stats
-    basic = con.execute("""
-        SELECT
-            COUNT(*) as total_videos,
-            COUNT(DISTINCT channel_name) as unique_channels,
-            SUM(CASE WHEN full_transcript IS NOT NULL AND length(full_transcript) > 100 THEN 1 ELSE 0 END) as with_transcripts,
-            SUM(CASE WHEN content_embedding_1024 IS NOT NULL THEN 1 ELSE 0 END) as with_embeddings,
-            MIN(watched_date) as earliest,
-            MAX(watched_date) as latest,
-            SUM(duration) / 3600 as total_hours
-        FROM youtube
-    """).fetchone()
-
-    total, channels, transcripts, embeddings, earliest, latest, hours = basic
-
-    output = [
-        "## YouTube Viewing Statistics\n",
-        f"**Total Videos**: {total:,}",
-        f"**Unique Channels**: {channels:,}",
-        f"**With Transcripts**: {transcripts:,} ({transcripts*100//total}%)",
-        f"**With Embeddings**: {embeddings:,} ({embeddings*100//total}%)",
-        f"**Date Range**: {str(earliest)[:10] if earliest else '?'} to {str(latest)[:10] if latest else '?'}",
-        f"**Total Watch Time**: ~{int(hours or 0):,} hours\n"
-    ]
-
-    # Top channels
-    top_channels = con.execute("""
-        SELECT channel_name, COUNT(*) as count
-        FROM youtube
-        WHERE channel_name IS NOT NULL AND channel_name != ''
-        GROUP BY channel_name
-        ORDER BY count DESC
-        LIMIT 10
-    """).fetchall()
-
-    output.append("### Top Channels")
-    for channel, count in top_channels:
-        output.append(f"- {channel}: {count} videos")
-
-    # Viewing by year
-    by_year = con.execute("""
-        SELECT
-            EXTRACT(YEAR FROM watched_date) as year,
-            COUNT(*) as count
-        FROM youtube
-        WHERE watched_date IS NOT NULL
-        GROUP BY year
-        ORDER BY year
-    """).fetchall()
-
-    if by_year:
-        output.append("\n### By Year")
-        for year, count in by_year:
-            if year:
-                bar = "█" * min(count // 100, 30)
-                output.append(f"  {int(year)}: {bar} ({count:,})")
-
-    # Videos with multiple watches
-    rewatched = con.execute("""
-        SELECT COUNT(*) FROM youtube WHERE watch_count > 1
-    """).fetchone()[0]
-
-    if rewatched:
-        output.append(f"\n**Rewatched**: {rewatched:,} videos watched multiple times")
-
-    return "\n".join(output)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # LAYER QUERY TOOLS (Phase 6 - query new architecture)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1730,33 +1975,40 @@ DATA_DIR = BASE / "data"
 
 
 @mcp.tool()
-def query_focus(month: str = None, limit: int = 10) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/daily-focus-v1.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/daily-focus-v1.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_focus_v2(month: str = None, limit: int = 10) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/daily-focus-v2.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/daily-focus-v2.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_mvp_velocity(month: str = None, limit: int = 12) -> str:
-    """BROKEN: Connection error during materialization. Use search_conversations('MVP') instead."""
-    return "⚠️ BROKEN: Connection error during data extraction.\n\nUse semantic_search('mvp development') or search_conversations('MVP') instead."
-
-
-@mcp.tool()
-def query_tool_stacks(month: str = None, limit: int = 12) -> str:
+def query_analytics(view: str = "timeline", date: str = None, month: str = None, source: str = None, limit: int = 15) -> str:
     """
-    Query technology stack patterns from tool_stacks/v2.
-    Shows which tools Mordechai uses together and how they evolve.
+    Query analytics across timeline, tool stacks, problem resolution, spend, and conversation summary.
 
     Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max months to return (default 12)
+        view: What to analyze:
+            - "timeline" (default): What happened on a specific date across all sources (was query_timeline)
+            - "stacks": Technology stack patterns over time (was query_tool_stacks)
+            - "problems": Debugging and problem resolution patterns (was query_problem_resolution)
+            - "spend": Cost breakdown by source/time (was query_spend)
+            - "summary": Comprehensive conversation analysis summary (was query_conversation_summary)
+        date: Date in YYYY-MM-DD format (used with view="timeline")
+        month: YYYY-MM filter (used with stacks, problems, spend views)
+        source: Source filter for spend (e.g., "openrouter", "claude_code")
+        limit: Max results (default 15)
     """
+    if view == "timeline":
+        if not date:
+            return "Please provide a date (YYYY-MM-DD) for timeline view."
+        return _query_timeline_view(date)
+    elif view == "stacks":
+        return _query_tool_stacks_view(month, limit)
+    elif view == "problems":
+        return _query_problem_resolution_view(month, limit)
+    elif view == "spend":
+        return _query_spend_view(month, source)
+    elif view == "summary":
+        return _query_conversation_summary_view()
+    else:
+        return f"Unknown view: {view}. Use: timeline, stacks, problems, spend, summary"
+
+
+def _query_tool_stacks_view(month: str = None, limit: int = 12) -> str:
+    """Internal: Query technology stack patterns."""
     path = INTERP_DIR / "tool_stacks" / "v2" / "monthly.parquet"
     if not path.exists():
         return "tool_stacks/v2 not built. Run: python pipelines/build_tool_stacks_v2.py"
@@ -1782,7 +2034,6 @@ def query_tool_stacks(month: str = None, limit: int = 12) -> str:
             LIMIT {limit}
         """
         results = con.execute(query).fetchall()
-    con.close()
 
     if not results:
         return f"No tool stack data found{' for ' + month if month else ''}"
@@ -1801,16 +2052,8 @@ def query_tool_stacks(month: str = None, limit: int = 12) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def query_problem_resolution(month: str = None, limit: int = 12) -> str:
-    """
-    Query debugging and problem resolution patterns from problem_resolution/v2.
-    Shows how Mordechai investigates and solves problems.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        limit: Max months to return (default 12)
-    """
+def _query_problem_resolution_view(month: str = None, limit: int = 12) -> str:
+    """Internal: Query debugging and problem resolution patterns."""
     path = INTERP_DIR / "problem_resolution" / "v2" / "monthly.parquet"
     if not path.exists():
         return "problem_resolution/v2 not built. Run: python pipelines/build_problem_resolution_v2.py"
@@ -1836,7 +2079,6 @@ def query_problem_resolution(month: str = None, limit: int = 12) -> str:
             LIMIT {limit}
         """
         results = con.execute(query).fetchall()
-    con.close()
 
     if not results:
         return f"No problem resolution data found{' for ' + month if month else ''}"
@@ -1856,16 +2098,8 @@ def query_problem_resolution(month: str = None, limit: int = 12) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def query_spend(month: str = None, source: str = None) -> str:
-    """
-    Query spend data from facts/spend layers.
-    Shows cost breakdown by source and time.
-
-    Args:
-        month: Optional YYYY-MM to filter (e.g., '2025-12')
-        source: Optional source filter (e.g., 'openrouter', 'claude_code')
-    """
+def _query_spend_view(month: str = None, source: str = None) -> str:
+    """Internal: Query spend data from facts/spend layers."""
     monthly_path = FACTS_DIR / "spend" / "monthly.parquet"
     daily_path = FACTS_DIR / "spend" / "daily.parquet"
 
@@ -1918,15 +2152,8 @@ def query_spend(month: str = None, source: str = None) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def query_timeline(date: str) -> str:
-    """
-    Query what happened on a specific date across all sources.
-    Joins temporal_dim with focus and spend data.
-
-    Args:
-        date: Date in YYYY-MM-DD format
-    """
+def _query_timeline_view(date: str) -> str:
+    """Internal: What happened on a specific date across all sources."""
     temporal_path = FACTS_DIR / "temporal_dim.parquet"
     focus_path = INTERP_DIR / "focus" / "v1" / "daily.parquet"
 
@@ -1985,263 +2212,16 @@ def query_timeline(date: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GOOGLE BROWSING TOOLS
-# ═══════════════════════════════════════════════════════════════════════════════
+# GOOGLE BROWSING TOOLS — REMOVED 2026-02-05 (static data, not live-synced)
 
-@mcp.tool()
-def search_google_searches(query: str, limit: int = 20) -> str:
-    """
-    Search through 52K Google searches Mordechai has made.
-    Reveals what he was curious about and researching.
-
-    Args:
-        query: Search term to find in Google search queries
-        limit: Max results to return (default 20)
-    """
-    path = DATA_DIR / "google_searches.parquet"
-    if not path.exists():
-        return "Google searches data not found."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT query, timestamp, has_question
-        FROM '{path}'
-        WHERE query ILIKE ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    """, [f"%{query}%", limit]).fetchall()
-
-    if not results:
-        return f"No Google searches matching '{query}'"
-
-    output = [f"🔍 Google Searches matching '{query}' ({len(results)} results)\n"]
-    for q, ts, has_q in results:
-        q_mark = "❓" if has_q else ""
-        output.append(f"  [{str(ts)[:10]}] {q_mark} {q}")
-
-    return "\n".join(output)
-
-
-@mcp.tool()
-def search_google_visits(query: str, limit: int = 20) -> str:
-    """
-    Search through 58K websites Mordechai has visited.
-    Shows browsing patterns and information sources.
-
-    Args:
-        query: Search term to find in page titles or URLs
-        limit: Max results to return (default 20)
-    """
-    path = DATA_DIR / "google_visits.parquet"
-    if not path.exists():
-        return "Google visits data not found."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT title, url, timestamp
-        FROM '{path}'
-        WHERE title ILIKE ? OR url ILIKE ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    """, [f"%{query}%", f"%{query}%", limit]).fetchall()
-
-    if not results:
-        return f"No website visits matching '{query}'"
-
-    output = [f"🌐 Website Visits matching '{query}' ({len(results)} results)\n"]
-    for title, url, ts in results:
-        title_short = (title[:60] + "...") if title and len(title) > 60 else (title or "No title")
-        output.append(f"  [{str(ts)[:10]}] {title_short}")
-        output.append(f"    → {url[:80]}")
-
-    return "\n".join(output)
-
-
-def _google_stats() -> str:
-    """Internal: Get statistics about Google browsing data."""
-    searches_path = DATA_DIR / "google_searches.parquet"
-    visits_path = DATA_DIR / "google_visits.parquet"
-
-    con = get_interpretations_db()
-    output = ["📊 Google Browsing Statistics\n"]
-
-    if searches_path.exists():
-        stats = con.execute(f"""
-            SELECT
-                COUNT(*) as total,
-                MIN(timestamp) as first,
-                MAX(timestamp) as last,
-                SUM(CASE WHEN has_question THEN 1 ELSE 0 END) as questions
-            FROM '{searches_path}'
-        """).fetchone()
-        output.append(f"### Searches")
-        output.append(f"  Total: {stats[0]:,}")
-        output.append(f"  Questions: {stats[3]:,}")
-        output.append(f"  Range: {str(stats[1])[:10]} → {str(stats[2])[:10]}")
-
-    if visits_path.exists():
-        stats = con.execute(f"""
-            SELECT
-                COUNT(*) as total,
-                MIN(timestamp) as first,
-                MAX(timestamp) as last
-            FROM '{visits_path}'
-        """).fetchone()
-        output.append(f"\n### Visits")
-        output.append(f"  Total: {stats[0]:,}")
-        output.append(f"  Range: {str(stats[1])[:10]} → {str(stats[2])[:10]}")
-
-    return "\n".join(output)
+# GITHUB FILE CHANGES — REMOVED 2026-02-10 (orphaned code from deleted tool)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GITHUB FILE CHANGES
-# ═══════════════════════════════════════════════════════════════════════════════
+# YOUTUBE SEARCHES — REMOVED 2026-02-05 (static data, not live-synced)
 
-@mcp.tool()
-def search_file_changes(query: str, limit: int = 30) -> str:
-    """
-    Search GitHub file changes by filename or repo.
-    Shows what files were modified in commits.
-
-    Args:
-        query: Search term for filename or repo
-        limit: Max results (default 30)
-    """
-    path = DATA_DIR / "github_file_changes.parquet"
-    if not path.exists():
-        return "GitHub file changes data not found."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT sha, repo_name, filename, status, additions, deletions
-        FROM '{path}'
-        WHERE filename ILIKE ? OR repo_name ILIKE ?
-        ORDER BY additions + deletions DESC
-        LIMIT ?
-    """, [f"%{query}%", f"%{query}%", limit]).fetchall()
-
-    if not results:
-        return f"No file changes matching '{query}'"
-
-    output = [f"📝 File Changes matching '{query}' ({len(results)} results)\n"]
-    for sha, repo, fname, status, adds, dels in results:
-        output.append(f"  [{repo}] {fname}")
-        output.append(f"    {status}: +{adds} -{dels} (sha: {sha[:7]})")
-
-    return "\n".join(output)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# YOUTUBE SEARCHES
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def search_youtube_searches(query: str, limit: int = 20) -> str:
-    """
-    Search through 1.2K YouTube searches Mordechai has made.
-    Shows what video content he was looking for.
-
-    Args:
-        query: Search term to find in YouTube search queries
-        limit: Max results (default 20)
-    """
-    path = DATA_DIR / "youtube_searches.parquet"
-    if not path.exists():
-        return "YouTube searches data not found."
-
-    con = get_interpretations_db()
-    results = con.execute(f"""
-        SELECT query, timestamp, has_question
-        FROM '{path}'
-        WHERE query ILIKE ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    """, [f"%{query}%", limit]).fetchall()
-
-    if not results:
-        return f"No YouTube searches matching '{query}'"
-
-    output = [f"🎬 YouTube Searches matching '{query}' ({len(results)} results)\n"]
-    for q, ts, has_q in results:
-        q_mark = "❓" if has_q else ""
-        output.append(f"  [{str(ts)[:10]}] {q_mark} {q}")
-
-    return "\n".join(output)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # INTERPRETATION QUERY TOOLS
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def query_signature_phrases(category: str = None, limit: int = 50) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/signature-phrases.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/signature-phrases.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_insights(month: str = None, category: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/insights.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/insights.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_questions(month: str = None, category: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/questions.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/questions.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_monthly_themes(limit: int = 12) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/monthly-themes.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/monthly-themes.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_intellectual_evolution(limit: int = 11) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/intellectual-evolution.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/intellectual-evolution.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_weekly_summaries(month: str = None, limit: int = 10) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-synthesis.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-synthesis.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_mood(month: str = None, limit: int = 14) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/mood-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/mood-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HIDDEN GEM INTERPRETATION TOOLS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def query_accomplishments(month: str = None, limit: int = 10) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/accomplishments.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/accomplishments.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_glossary(term: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/07-meta/glossary.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/07-meta/glossary.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_phrase_context(phrase: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/phrase-context.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/phrase-context.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_project_arcs(project: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/03-case-studies/project-arcs.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/03-case-studies/project-arcs.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2261,12 +2241,35 @@ def get_markdown_db():
 
 
 @mcp.tool()
-def search_markdown(query: str, limit: int = 15) -> str:
+def search_docs(query: str = "", filter: str = None, project: str = None, limit: int = 15, min_depth: int = 70) -> str:
     """
-    Search 39K harvested markdown documents by keyword.
-    Searches content, titles, and filenames.
-    Returns documents with metadata (project, energy, depth, etc.)
+    Search markdown corpus and IP documents with various filters.
+
+    Args:
+        query: Search query (keyword for markdown, semantic for IP docs)
+        filter: What to search/filter:
+            - None (default): Keyword search on markdown corpus (was search_markdown)
+            - "ip": Vector search on curated IP documents — frameworks, SHELET, etc. (was search_ip_docs)
+            - "breakthrough": Documents with BREAKTHROUGH energy (was get_breakthrough_docs)
+            - "deep": High depth-score documents (was get_deep_docs)
+            - "project": Documents for a specific project (was get_project_docs)
+            - "todos": Documents with open TODOs (was get_open_todos)
+        project: Project name (used with filter="project" or filter="todos")
+        limit: Max results (default 15)
+        min_depth: Minimum depth score (used with filter="deep", default 70)
     """
+    if filter == "ip":
+        return _search_ip_docs_view(query, limit)
+    elif filter == "breakthrough":
+        return _get_breakthrough_docs_view(limit)
+    elif filter == "deep":
+        return _get_deep_docs_view(min_depth, limit)
+    elif filter == "project":
+        return _get_project_docs_view(project or query, limit)
+    elif filter == "todos":
+        return _get_open_todos_view(project, limit)
+
+    # Default: keyword search on markdown
     db = get_markdown_db()
     if not db:
         return "Markdown corpus not found. Run harvest_markdown_v3.py first."
@@ -2295,13 +2298,8 @@ def search_markdown(query: str, limit: int = 15) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def get_breakthrough_docs(limit: int = 20) -> str:
-    """
-    Get documents with BREAKTHROUGH energy.
-    These are aha moments, insights, and realizations.
-    Sorted by depth score for maximum intellectual value.
-    """
+def _get_breakthrough_docs_view(limit: int = 20) -> str:
+    """Internal: Get documents with BREAKTHROUGH energy."""
     db = get_markdown_db()
     if not db:
         return "Markdown corpus not found."
@@ -2328,12 +2326,8 @@ def get_breakthrough_docs(limit: int = 20) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def get_deep_docs(min_depth: int = 70, limit: int = 20) -> str:
-    """
-    Get documents with high depth scores (substantive content).
-    Depth combines: length, structure, SEED concepts, decisions, voice, energy.
-    """
+def _get_deep_docs_view(min_depth: int = 70, limit: int = 20) -> str:
+    """Internal: Get documents with high depth scores."""
     db = get_markdown_db()
     if not db:
         return "Markdown corpus not found."
@@ -2360,12 +2354,8 @@ def get_deep_docs(min_depth: int = 70, limit: int = 20) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def get_project_docs(project: str, limit: int = 20) -> str:
-    """
-    Get documents for a specific project (sparkii, wotc, intellectual_dna, etc.)
-    Sorted by depth score to surface the best content.
-    """
+def _get_project_docs_view(project: str, limit: int = 20) -> str:
+    """Internal: Get documents for a specific project."""
     db = get_markdown_db()
     if not db:
         return "Markdown corpus not found."
@@ -2392,12 +2382,8 @@ def get_project_docs(project: str, limit: int = 20) -> str:
     return "\n".join(output)
 
 
-@mcp.tool()
-def get_open_todos(project: str = None, limit: int = 20) -> str:
-    """
-    Get documents with the most open TODOs (unfinished work).
-    Optionally filter by project.
-    """
+def _get_open_todos_view(project: str = None, limit: int = 20) -> str:
+    """Internal: Get documents with the most open TODOs."""
     db = get_markdown_db()
     if not db:
         return "Markdown corpus not found."
@@ -2482,7 +2468,7 @@ def _markdown_stats() -> str:
 @mcp.tool()
 def unified_search(query: str, limit: int = 15) -> str:
     """
-    Search across ALL sources: conversations, YouTube, GitHub, markdown.
+    Search across ALL sources: conversations, GitHub, markdown.
     Returns integrated timeline of thinking on a topic.
     """
     results = []
@@ -2498,25 +2484,6 @@ def unified_search(query: str, limit: int = 15) -> str:
     except Exception:
         pass
 
-    # 2. YouTube (keyword search)
-    try:
-        yt_db = get_youtube_db()
-        if yt_db:
-            yt_results = yt_db.execute("""
-                SELECT 'youtube' as source, title,
-                       COALESCE(LEFT(full_transcript, 500), '') as content,
-                       CAST(watched_date AS VARCHAR) as date,
-                       0.5 as score
-                FROM youtube
-                WHERE title ILIKE ?
-                   OR channel_name ILIKE ?
-                   OR full_transcript ILIKE ?
-                ORDER BY watched_date DESC NULLS LAST
-                LIMIT 3
-            """, [f'%{query}%', f'%{query}%', f'%{query}%']).fetchall()
-            results.extend(yt_results)
-    except Exception:
-        pass
 
     # 3. GitHub commits (keyword search)
     try:
@@ -2586,43 +2553,7 @@ def unified_search(query: str, limit: int = 15) -> str:
 # HIDDEN INTERPRETATION LAYERS (Phase 1 55x Mining - Jan 2026)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_conversation_titles(month: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/conversation-titles.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/conversation-titles.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
-
-@mcp.tool()
-def query_weekly_expertise(month: str = None, limit: int = 12) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-expertise.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-expertise.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_tool_preferences(month: str = None, limit: int = 12) -> str:
-    """BROKEN: Only returns message counts, no actual preference data."""
-    return "⚠️ BROKEN: This tool only returns message counts, not actual preferences.\n\nUse query_tool_stacks() for technology stack evolution."
-
-
-@mcp.tool()
-def query_tool_combos(limit: int = 10) -> str:
-    """BROKEN: Empty data - no stack combinations recorded."""
-    return "⚠️ BROKEN: No stack combinations were recorded in the data.\n\nUse query_tool_stacks() for technology stack evolution."
-
-
-@mcp.tool()
-def query_intellectual_themes(theme: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/01-frameworks/themes.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/01-frameworks/themes.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_youtube_links(month: str = None, limit: int = 15) -> str:
-    """BROKEN: Tool returns parse errors. Use youtube_search() instead."""
-    return "⚠️ BROKEN: This tool returns parse errors for all data.\n\nUse youtube_search() or youtube_semantic_search() instead."
-
-
-@mcp.tool()
 def query_problem_chains(month: str = None, limit: int = 15) -> str:
     """DEPRECATED: Materialized to wiki. Read content/02-evidence/problem-chains.md"""
     return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/problem-chains.md\n\nUse semantic_search() or search_conversations() for fresh queries."
@@ -2633,64 +2564,15 @@ def query_problem_chains(month: str = None, limit: int = 15) -> str:
 # Mining 732K OpenRouter API calls for insights
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_model_efficiency(top_n: int = 20, sort_by: str = "cost") -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/model-efficiency.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/model-efficiency.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_provider_performance(month: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/provider-performance.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/provider-performance.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_spend_temporal(month: str = None, view: str = "daily") -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/spend-temporal.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/spend-temporal.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_spend_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/spend-analysis.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/spend-analysis.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONVERSATION ANALYSIS TOOLS (Phase 3 55x Mining - Jan 2026)
 # Mining 353K messages for threads, Q&A patterns, and corrections
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_conversation_stats(top_n: int = 20, sort_by: str = "messages") -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/conversation-stats.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/conversation-stats.md\n\nUse semantic_search() or search_conversations() for fresh queries."
 
-
-@mcp.tool()
-def query_deep_conversations(min_messages: int = 100, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/deep-conversations.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/deep-conversations.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_question_patterns(month: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/question-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/question-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_correction_patterns(month: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/correction-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/correction-patterns.md\n\nUse semantic_search() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_conversation_summary() -> str:
-    """
-    Get a comprehensive conversation analysis summary.
-    """
+def _query_conversation_summary_view() -> str:
+    """Internal: Comprehensive conversation analysis summary."""
     stats_path = INTERP_DIR / "conversation_stats" / "v1" / "conversations.parquet"
     qa_path = INTERP_DIR / "conversation_qa" / "v1" / "questions.parquet"
     corr_path = INTERP_DIR / "conversation_corrections" / "v1" / "corrections.parquet"
@@ -2763,75 +2645,11 @@ def query_conversation_summary() -> str:
 # Mining 112K Google searches/visits for behavioral patterns
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_search_patterns(month: str = None, intent: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/search-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/search-patterns.md\n\nUse search_google_searches() for fresh queries."
-
-
-@mcp.tool()
-def query_browsing_patterns(category: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/browsing-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/browsing-patterns.md\n\nUse search_google_visits() for fresh queries."
-
-
-@mcp.tool()
-def query_research_velocity(month: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/research-velocity.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/research-velocity.md\n\nUse search_google_searches() for fresh queries."
-
-
-@mcp.tool()
-def query_curiosity_terms(month: str = None, limit: int = 30) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/curiosity-terms.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/curiosity-terms.md\n\nUse search_google_searches() for fresh queries."
-
-
-@mcp.tool()
-def query_behavioral_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/behavioral-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/behavioral-patterns.md\n\nUse search_google_searches() or search_google_visits() for fresh queries."
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CODE PRODUCTIVITY TOOLS (Phase 5 55x Mining - Jan 2026)
 # Mining 1.4K commits + 132 repos for productivity patterns
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def query_code_velocity(month: str = None, view: str = "monthly") -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/code-velocity.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/code-velocity.md\n\nUse github_project_timeline() or code_to_conversation() for fresh queries."
-
-
-@mcp.tool()
-def query_repo_stats(active_only: bool = True, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/repo-stats.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/repo-stats.md\n\nUse github_project_timeline() for fresh queries."
-
-
-@mcp.tool()
-def query_language_stats() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/language-stats.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/language-stats.md\n\nUse github_project_timeline() for fresh queries."
-
-
-@mcp.tool()
-def query_commit_patterns(commit_type: str = None) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/commit-patterns.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/commit-patterns.md\n\nUse search_file_changes() for fresh queries."
-
-
-@mcp.tool()
-def query_high_productivity_days(limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/high-productivity-days.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/high-productivity-days.md\n\nUse search_file_changes() for fresh queries."
-
-
-@mcp.tool()
-def query_code_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/code-productivity.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/code-productivity.md\n\nUse search_file_changes() or github_project_timeline() for fresh queries."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2839,69 +2657,11 @@ def query_code_summary() -> str:
 # Mining 5.5K documents (6.3M words) for knowledge patterns
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_markdown_stats(category: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-stats.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-stats.md\n\nUse search_markdown() for fresh queries."
-
-
-@mcp.tool()
-def query_markdown_categories() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-categories.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-categories.md\n\nUse search_markdown() for fresh queries."
-
-
-@mcp.tool()
-def query_markdown_projects() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-projects.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-projects.md\n\nUse search_markdown() for fresh queries."
-
-
-@mcp.tool()
-def query_curated_docs(collection: str = "ip") -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/curated-docs.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/curated-docs.md\n\nUse search_markdown() for fresh queries."
-
-
-@mcp.tool()
-def query_markdown_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/markdown-corpus.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/markdown-corpus.md\n\nUse search_markdown() for fresh queries."
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 7: CROSS-DIMENSIONAL SYNTHESIS (2026-01-11)
 # Productivity matrix, learning arcs, project success, unified timeline
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-def query_productivity_matrix(month: str = None, view: str = "daily", top_n: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/productivity-matrix.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/productivity-matrix.md\n\nUse query_accomplishments() or search_conversations() for fresh queries."
-
-
-@mcp.tool()
-def query_learning_arcs(month: str = None, topic: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/learning-arcs.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/learning-arcs.md\n\nUse youtube_search() or search_google_searches() for fresh queries."
-
-
-@mcp.tool()
-def query_project_success(category: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/project-success.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/project-success.md\n\nUse github_project_timeline() for fresh queries."
-
-
-@mcp.tool()
-def query_unified_timeline(year: str = None, limit: int = 24) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/unified-timeline.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/unified-timeline.md\n\nUse unified_search() for fresh queries."
-
-
-@mcp.tool()
-def query_cross_dimensional_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/cross-dimensional.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/cross-dimensional.md\n\nUse unified_search() for fresh queries."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2909,34 +2669,737 @@ def query_cross_dimensional_summary() -> str:
 # Anomalies, trends, recommendations, weekly synthesis
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
-def query_anomalies(anomaly_type: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/anomalies.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/anomalies.md\n\nUse unified_search() for fresh queries."
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V6 STRUCTURED SUMMARY TOOLS (Phase 2 - New tools)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# search_open_questions — MERGED into search_summaries(extract="questions")
+
+
+# search_decisions — MERGED into search_summaries(extract="decisions")
+
+
+# quote_me — MERGED into search_summaries(extract="quotes")
+
+
+def _domain_map_view(source: str = None, importance: str = None) -> str:
+    """Internal: Overview of thinking distribution across all 25 domains."""
+    sdb = get_summaries_db()
+
+    # Build filter
+    where_parts = []
+    params = []
+    if source:
+        where_parts.append("source = ?")
+        params.append(source)
+    if importance:
+        where_parts.append("importance = ?")
+        params.append(importance)
+    where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+    # Domain breakdown
+    domains = sdb.execute(f"""
+        SELECT
+            domain_primary,
+            COUNT(*) as count,
+            COUNT(CASE WHEN importance = 'breakthrough' THEN 1 END) as breakthroughs,
+            COUNT(CASE WHEN importance = 'significant' THEN 1 END) as significant,
+            ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct
+        FROM summaries
+        {where_clause}
+        GROUP BY domain_primary
+        ORDER BY count DESC
+    """, params).fetchall()
+
+    if not domains:
+        return "No domain data available."
+
+    total = sum(d[1] for d in domains)
+    filter_desc = ""
+    if source:
+        filter_desc += f" source={source}"
+    if importance:
+        filter_desc += f" importance={importance}"
+
+    output = [f"## Domain Map ({total:,} conversations{filter_desc})\n"]
+
+    for domain, count, bt, sig, pct in domains:
+        bar = "█" * int(pct / 2)
+        bt_str = f" 🔥{bt}" if bt else ""
+        sig_str = f" ⭐{sig}" if sig else ""
+        output.append(f"**{domain}**: {count:,} ({pct}%) {bar}{bt_str}{sig_str}")
+
+    # Top concepts per top 5 domains
+    output.append("\n### Top Concepts by Domain\n")
+    for domain, count, _, _, _ in domains[:5]:
+        rows = sdb.execute("""
+            SELECT concepts FROM summaries
+            WHERE domain_primary = ? AND concepts IS NOT NULL
+            LIMIT 50
+        """, [domain]).fetchall()
+        concept_counts = {}
+        for row in rows:
+            for c in _parse_json_field(row[0]):
+                if c:
+                    concept_counts[c] = concept_counts.get(c, 0) + 1
+        top_concepts = sorted(concept_counts.items(), key=lambda x: -x[1])[:8]
+        if top_concepts:
+            output.append(f"**{domain}**: {', '.join(c[0] for c in top_concepts)}")
+
+    return "\n".join(output)
+
+
+def _thinking_pulse_view(domain: str = None) -> str:
+    """Internal: Domain × thinking_stage matrix."""
+    sdb = get_summaries_db()
+
+    if domain:
+        # Focused view for one domain
+        stages = sdb.execute("""
+            SELECT thinking_stage, COUNT(*) as cnt,
+                   COUNT(CASE WHEN importance = 'breakthrough' THEN 1 END) as breakthroughs
+            FROM summaries
+            WHERE domain_primary = ? AND thinking_stage IS NOT NULL
+            GROUP BY thinking_stage
+            ORDER BY cnt DESC
+        """, [domain]).fetchall()
+
+        if not stages:
+            return f"No data for domain: {domain}"
+
+        output = [f"## Thinking Pulse: {domain}\n"]
+        stage_icons = {"exploring": "🔍", "crystallizing": "💎", "refining": "🔧", "executing": "🚀"}
+        for stage, cnt, bt in stages:
+            icon = stage_icons.get(stage, "📝")
+            bt_str = f" (🔥{bt} breakthroughs)" if bt else ""
+            output.append(f"{icon} **{stage}**: {cnt} conversations{bt_str}")
+
+        return "\n".join(output)
+
+    # Full crosstab view
+    crosstab = sdb.execute("""
+        SELECT
+            domain_primary,
+            COUNT(CASE WHEN thinking_stage = 'exploring' THEN 1 END) as exploring,
+            COUNT(CASE WHEN thinking_stage = 'crystallizing' THEN 1 END) as crystallizing,
+            COUNT(CASE WHEN thinking_stage = 'refining' THEN 1 END) as refining,
+            COUNT(CASE WHEN thinking_stage = 'executing' THEN 1 END) as executing,
+            COUNT(*) as total
+        FROM summaries
+        WHERE thinking_stage IS NOT NULL
+        GROUP BY domain_primary
+        ORDER BY total DESC
+        LIMIT 25
+    """).fetchall()
+
+    if not crosstab:
+        return "No thinking pulse data available."
+
+    output = ["## Thinking Pulse (all domains)\n"]
+    output.append(f"{'Domain':<25s} {'🔍 Expl':>8s} {'💎 Cryst':>8s} {'🔧 Refn':>8s} {'🚀 Exec':>8s} {'Total':>7s}")
+    output.append("-" * 72)
+
+    crystallizing_domains = []
+    exploring_domains = []
+
+    for domain, expl, cryst, refn, exec_, total in crosstab:
+        output.append(f"{domain:<25s} {expl:>8d} {cryst:>8d} {refn:>8d} {exec_:>8d} {total:>7d}")
+        if cryst > expl and cryst > 0:
+            crystallizing_domains.append((domain, cryst))
+        if expl > cryst + refn + exec_ and expl > 0:
+            exploring_domains.append((domain, expl))
+
+    # Highlights
+    if crystallizing_domains:
+        output.append("\n### 💎 Crystallizing (ready to ship)")
+        for domain, cnt in sorted(crystallizing_domains, key=lambda x: -x[1])[:5]:
+            output.append(f"  - {domain} ({cnt} crystallizing)")
+
+    if exploring_domains:
+        output.append("\n### 🔍 Still Exploring")
+        for domain, cnt in sorted(exploring_domains, key=lambda x: -x[1])[:5]:
+            output.append(f"  - {domain} ({cnt} exploring)")
+
+    return "\n".join(output)
 
 
 @mcp.tool()
-def query_trends(trend_type: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/trends.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/trends.md\n\nUse semantic_search() for fresh queries."
+def unfinished_threads(domain: str = None, importance: str = "significant") -> str:
+    """
+    Find conversations worth revisiting: exploring/crystallizing stage with open questions.
+    These are unfinished intellectual threads that might deserve attention.
+
+    Args:
+        domain: Optional domain filter
+        importance: Minimum importance level (default "significant")
+    """
+    sdb = get_summaries_db()
+
+    importance_filter = {
+        "breakthrough": "importance = 'breakthrough'",
+        "significant": "importance IN ('breakthrough', 'significant')",
+        "routine": "1=1",  # all
+    }.get(importance, "importance IN ('breakthrough', 'significant')")
+
+    where_parts = [
+        "thinking_stage IN ('exploring', 'crystallizing')",
+        importance_filter,
+        "open_questions IS NOT NULL",
+        "open_questions != '[]'",
+        "open_questions NOT LIKE '%none identified%'",
+    ]
+    params = []
+    if domain:
+        where_parts.append("domain_primary = ?")
+        params.append(domain)
+
+    where_clause = " AND ".join(where_parts)
+
+    results = sdb.execute(f"""
+        SELECT conversation_id, title, source, domain_primary,
+               thinking_stage, importance, open_questions, summary, msg_count
+        FROM summaries
+        WHERE {where_clause}
+        ORDER BY
+            CASE importance WHEN 'breakthrough' THEN 0 WHEN 'significant' THEN 1 ELSE 2 END,
+            msg_count DESC
+        LIMIT 25
+    """, params).fetchall()
+
+    if not results:
+        return f"No unfinished threads found{' in ' + domain if domain else ''}."
+
+    filter_desc = f" in {domain}" if domain else ""
+    output = [f"## Unfinished Threads{filter_desc} (importance >= {importance})\n"]
+    output.append(f"_Conversations still exploring/crystallizing with open questions_\n")
+
+    for conv_id, title, source, dom, stage, imp, oq_raw, summary, msg_count in results:
+        questions = _parse_json_field(oq_raw)
+        real_questions = [q for q in questions if q and "none identified" not in str(q).lower()]
+        if not real_questions:
+            continue
+
+        imp_icon = {"breakthrough": "🔥", "significant": "⭐", "routine": "📝"}.get(imp, "📝")
+        stage_icon = {"exploring": "🔍", "crystallizing": "💎"}.get(stage, "📝")
+
+        output.append(f"### {imp_icon} {stage_icon} {title or 'Untitled'}")
+        output.append(f"_Domain: {dom} | Source: {source} | {msg_count} msgs_")
+        output.append(f"> {(summary or '')[:200]}...")
+        output.append("**Open questions**:")
+        for q in real_questions[:3]:
+            output.append(f"  ❓ {q[:200]}")
+        if len(real_questions) > 3:
+            output.append(f"  _... and {len(real_questions) - 3} more_")
+        output.append(f"_ID: {conv_id[:20]}..._\n")
+
+    return "\n".join(output)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COGNITIVE PROSTHETIC TOOLS (tunnel state, context preservation, switching cost)
+# These are the SOUL of the prosthetic — they turn a search engine into a
+# monotropic cognitive aid that preserves context across hyperfocus tunnels.
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 @mcp.tool()
-def query_recommendations(rec_type: str = None, limit: int = 20) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/recommendations.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/recommendations.md\n\nUse semantic_search() for fresh queries."
+def tunnel_state(domain: str, limit: int = 10) -> str:
+    """Reconstruct cognitive save-state for a domain — where you left off.
+    Returns: thinking stage, open questions, decisions, concepts, emotional tone.
+    The 'load game' button for a monotropic mind."""
+    db = get_summaries_db()
+    rows = db.execute(f"""
+        SELECT summary, thinking_stage, importance, emotional_tone,
+               open_questions, decisions, concepts, key_insights, connections_to,
+               cognitive_pattern, problem_solving_approach, msg_count, title, source
+        FROM summaries
+        WHERE domain_primary = ?
+        ORDER BY summarized_at DESC
+        LIMIT ?
+    """, [domain, limit]).fetchall()
+    if not rows:
+        return f"No conversations found for domain: {domain}"
+    cols = ['summary','thinking_stage','importance','emotional_tone','open_questions',
+            'decisions','concepts','key_insights','connections_to','cognitive_pattern',
+            'problem_solving_approach','msg_count','title','source']
+    # Latest state
+    latest = dict(zip(cols, rows[0]))
+    # Aggregate across all rows
+    all_oq, all_dec, all_concepts, all_insights, all_connections = [], [], set(), [], set()
+    importance_counts = {"breakthrough":0,"significant":0,"routine":0}
+    stage_counts = {}
+    for row in rows:
+        r = dict(zip(cols, row))
+        for q in _parse_json_field(r['open_questions']):
+            if q and q.lower() != 'none identified' and q not in all_oq:
+                all_oq.append(q)
+        for d in _parse_json_field(r['decisions']):
+            if d and d not in all_dec:
+                all_dec.append(d)
+        for c in _parse_json_field(r['concepts']):
+            all_concepts.add(c)
+        for i in _parse_json_field(r['key_insights']):
+            if i and i not in all_insights:
+                all_insights.append(i)
+        for c in _parse_json_field(r['connections_to']):
+            all_connections.add(c)
+        imp = r['importance'] or 'routine'
+        importance_counts[imp] = importance_counts.get(imp, 0) + 1
+        stage = r['thinking_stage'] or ''
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+    output = [f"## 🧠 Tunnel State: {domain}\n"]
+    output.append(f"**Current stage:** {latest['thinking_stage'] or 'unknown'}")
+    output.append(f"**Emotional tone:** {latest['emotional_tone'] or 'unknown'}")
+    output.append(f"**Conversations:** {len(rows)} (last {limit})")
+    bt = importance_counts.get('breakthrough', 0)
+    if bt: output.append(f"**Breakthroughs:** {bt} 💎")
+    output.append(f"**Cognitive pattern:** {latest['cognitive_pattern'] or 'unknown'}")
+    output.append(f"**Problem solving:** {latest['problem_solving_approach'] or 'unknown'}")
+    if all_oq:
+        output.append(f"\n### ❓ Open Questions ({len(all_oq)})")
+        for q in all_oq[:10]:
+            output.append(f"  - {q}")
+        if len(all_oq) > 10: output.append(f"  _... and {len(all_oq)-10} more_")
+    if all_dec:
+        output.append(f"\n### ✅ Decisions ({len(all_dec)})")
+        for d in all_dec[:7]:
+            output.append(f"  - {d}")
+        if len(all_dec) > 7: output.append(f"  _... and {len(all_dec)-7} more_")
+    if all_concepts:
+        output.append(f"\n### 🏷️ Active Concepts ({len(all_concepts)})")
+        output.append(f"  {', '.join(sorted(all_concepts)[:15])}")
+    if all_insights:
+        output.append(f"\n### 💡 Key Insights")
+        for i in all_insights[:5]:
+            output.append(f"  - {i}")
+    if all_connections:
+        output.append(f"\n### 🔗 Connected Domains")
+        output.append(f"  {', '.join(sorted(all_connections)[:10])}")
+    if stage_counts:
+        output.append(f"\n### 📊 Thinking Stage History")
+        for s, c in sorted(stage_counts.items(), key=lambda x:-x[1]):
+            output.append(f"  {s or 'unknown'}: {c}")
+    return "\n".join(output)
 
 
 @mcp.tool()
-def query_weekly_synthesis(weeks: int = 10) -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/weekly-synthesis.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/weekly-synthesis.md\n\nUse search_conversations() for fresh queries."
+def dormant_contexts(min_importance: str = "significant", limit: int = 20) -> str:
+    """Find abandoned tunnels — domains with open questions you haven't resolved.
+    The 'what have I forgotten?' alarm."""
+    db = get_summaries_db()
+    rows = db.execute("""
+        SELECT domain_primary, COUNT(*) as conv_count,
+               GROUP_CONCAT(open_questions, '|||') as all_oq,
+               GROUP_CONCAT(importance, ',') as importances,
+               MAX(thinking_stage) as latest_stage
+        FROM summaries
+        WHERE domain_primary != '' AND domain_primary IS NOT NULL
+        GROUP BY domain_primary
+        ORDER BY conv_count DESC
+    """).fetchall()
+    if not rows:
+        return "No domain data found."
+    importance_rank = {"breakthrough": 3, "significant": 2, "routine": 1}
+    min_rank = importance_rank.get(min_importance, 1)
+    results = []
+    for domain, count, all_oq_str, importances_str, stage in rows:
+        # Check importance threshold
+        imps = (importances_str or '').split(',')
+        max_imp = max(importance_rank.get(i.strip(), 0) for i in imps if i.strip())
+        if max_imp < min_rank:
+            continue
+        # Collect open questions
+        questions = []
+        for chunk in (all_oq_str or '').split('|||'):
+            for q in _parse_json_field(chunk):
+                if q and q.lower() != 'none identified' and q not in questions:
+                    questions.append(q)
+        if not questions:
+            continue
+        bt_count = sum(1 for i in imps if i.strip() == 'breakthrough')
+        results.append((domain, count, questions, stage, bt_count))
+    results.sort(key=lambda x: (-x[4], -len(x[2]), -x[1]))
+    output = [f"## 🔴 Dormant Contexts (importance >= {min_importance})\n"]
+    output.append(f"_Domains with unresolved open questions_\n")
+    for domain, count, questions, stage, bt in results[:limit]:
+        bt_marker = " 💎" if bt else ""
+        output.append(f"### {domain}{bt_marker}")
+        output.append(f"_{count} conversations | Stage: {stage or 'unknown'}_")
+        output.append(f"**{len(questions)} open questions:**")
+        for q in questions[:5]:
+            output.append(f"  ❓ {q}")
+        if len(questions) > 5:
+            output.append(f"  _... and {len(questions)-5} more_")
+        output.append("")
+    output.append(f"_Total: {len(results)} domains with open questions_")
+    return "\n".join(output)
 
 
 @mcp.tool()
-def query_discovery_summary() -> str:
-    """DEPRECATED: Materialized to wiki. Read content/02-evidence/discovery-insights.md"""
-    return "📚 DEPRECATED: This data is now in the wiki.\n\nRead: content/02-evidence/discovery-insights.md\n\nUse unified_search() for fresh queries."
+def context_recovery(domain: str, summary_count: int = 5) -> str:
+    """Full 'waking up' brief for re-entering a domain.
+    Returns recent summaries + accumulated state — everything needed to resume work.
+    The prosthetic's core value: making re-entry cheap."""
+    db = get_summaries_db()
+    rows = db.execute("""
+        SELECT title, source, summary, thinking_stage, importance,
+               emotional_tone, open_questions, decisions, key_insights,
+               concepts, connections_to, quotable, cognitive_pattern,
+               problem_solving_approach, msg_count
+        FROM summaries
+        WHERE domain_primary = ?
+        ORDER BY summarized_at DESC
+        LIMIT ?
+    """, [domain, summary_count + 10]).fetchall()
+    if not rows:
+        return f"No conversations found for domain: {domain}"
+    cols = ['title','source','summary','thinking_stage','importance',
+            'emotional_tone','open_questions','decisions','key_insights',
+            'concepts','connections_to','quotable','cognitive_pattern',
+            'problem_solving_approach','msg_count']
+    all_oq, all_dec, all_insights, all_quotes = [], [], [], []
+    for row in rows:
+        r = dict(zip(cols, row))
+        for q in _parse_json_field(r['open_questions']):
+            if q and q.lower() != 'none identified' and q not in all_oq: all_oq.append(q)
+        for d in _parse_json_field(r['decisions']):
+            if d and d not in all_dec: all_dec.append(d)
+        for i in _parse_json_field(r['key_insights']):
+            if i and i not in all_insights: all_insights.append(i)
+        for q in _parse_json_field(r['quotable']):
+            if q and q not in all_quotes: all_quotes.append(q)
+    latest = dict(zip(cols, rows[0]))
+    output = [f"## 🔄 Context Recovery: {domain}\n"]
+    output.append(f"**Stage:** {latest['thinking_stage'] or '?'} | **Tone:** {latest['emotional_tone'] or '?'} | **Conversations:** {len(rows)}")
+    output.append(f"\n### 📋 Recent Summaries\n")
+    for row in rows[:summary_count]:
+        r = dict(zip(cols, row))
+        title = (r['title'] or 'Untitled')[:60]
+        imp_icon = "💎" if r['importance'] == 'breakthrough' else "⭐" if r['importance'] == 'significant' else "·"
+        output.append(f"**{imp_icon} {title}** ({r['source']}, {r['msg_count']} msgs)")
+        output.append(f"> {(r['summary'] or '')[:300]}{'...' if len(r['summary'] or '') > 300 else ''}")
+        output.append("")
+    if all_oq:
+        output.append(f"### ❓ Accumulated Open Questions ({len(all_oq)})")
+        for q in all_oq[:10]: output.append(f"  - {q}")
+        if len(all_oq) > 10: output.append(f"  _... and {len(all_oq)-10} more_")
+    if all_dec:
+        output.append(f"\n### ✅ Key Decisions ({len(all_dec)})")
+        for d in all_dec[:7]: output.append(f"  - {d}")
+    if all_insights:
+        output.append(f"\n### 💡 Key Insights")
+        for i in all_insights[:5]: output.append(f"  - {i}")
+    if all_quotes:
+        output.append(f"\n### 💬 Quotable")
+        output.append(f'  > "{all_quotes[0][:200]}"')
+    return "\n".join(output)
+
+
+@mcp.tool()
+def tunnel_history(domain: str) -> str:
+    """Meta-view of your engagement with a domain over time.
+    Shows total conversations, thinking stage distribution, importance peaks,
+    and cognitive patterns."""
+    db = get_summaries_db()
+    rows = db.execute("""
+        SELECT thinking_stage, importance, emotional_tone,
+               cognitive_pattern, problem_solving_approach, concepts, source
+        FROM summaries
+        WHERE domain_primary = ?
+    """, [domain]).fetchall()
+    if not rows:
+        return f"No conversations found for domain: {domain}"
+    cols = ['thinking_stage','importance','emotional_tone','cognitive_pattern',
+            'problem_solving_approach','concepts','source']
+    stage_counts, imp_counts, tone_counts = {}, {}, {}
+    pattern_counts, approach_counts, source_counts = {}, {}, {}
+    all_concepts = {}
+    for row in rows:
+        r = dict(zip(cols, row))
+        s = r['thinking_stage'] or 'unknown'
+        stage_counts[s] = stage_counts.get(s, 0) + 1
+        i = r['importance'] or 'routine'
+        imp_counts[i] = imp_counts.get(i, 0) + 1
+        t = r['emotional_tone'] or ''
+        if t: tone_counts[t] = tone_counts.get(t, 0) + 1
+        p = r['cognitive_pattern'] or ''
+        if p: pattern_counts[p] = pattern_counts.get(p, 0) + 1
+        a = r['problem_solving_approach'] or ''
+        if a: approach_counts[a] = approach_counts.get(a, 0) + 1
+        src = r['source'] or ''
+        if src: source_counts[src] = source_counts.get(src, 0) + 1
+        for c in _parse_json_field(r['concepts']):
+            all_concepts[c] = all_concepts.get(c, 0) + 1
+    output = [f"## 📊 Tunnel History: {domain}\n"]
+    output.append(f"**Total conversations:** {len(rows)}")
+    bt = imp_counts.get('breakthrough', 0)
+    sig = imp_counts.get('significant', 0)
+    output.append(f"**Importance:** {bt} breakthrough, {sig} significant, {imp_counts.get('routine',0)} routine")
+    output.append(f"\n### Thinking Stages")
+    for s, c in sorted(stage_counts.items(), key=lambda x:-x[1]):
+        pct = c/len(rows)*100
+        bar = "█" * int(pct/5)
+        output.append(f"  {s}: {c} ({pct:.0f}%) {bar}")
+    if source_counts:
+        output.append(f"\n### Sources")
+        for s, c in sorted(source_counts.items(), key=lambda x:-x[1]):
+            output.append(f"  {s}: {c}")
+    if pattern_counts:
+        output.append(f"\n### Cognitive Patterns")
+        for p, c in sorted(pattern_counts.items(), key=lambda x:-x[1])[:7]:
+            output.append(f"  {p}: {c}")
+    if approach_counts:
+        output.append(f"\n### Problem Solving Approaches")
+        for a, c in sorted(approach_counts.items(), key=lambda x:-x[1])[:7]:
+            output.append(f"  {a}: {c}")
+    if tone_counts:
+        output.append(f"\n### Emotional Tones")
+        for t, c in sorted(tone_counts.items(), key=lambda x:-x[1])[:5]:
+            output.append(f"  {t}: {c}")
+    if all_concepts:
+        output.append(f"\n### Top Concepts ({len(all_concepts)} total)")
+        for c, n in sorted(all_concepts.items(), key=lambda x:-x[1])[:10]:
+            output.append(f"  {c}: {n}")
+    return "\n".join(output)
+
+
+@mcp.tool()
+def switching_cost(current_domain: str, target_domain: str) -> str:
+    """Estimate cognitive cost of switching between domains.
+    Factors: open questions left behind (abandonment), shared concepts (overlap discount).
+    Returns 0-1 score where lower = cheaper switch."""
+    db = get_summaries_db()
+    # Current domain state
+    cur_rows = db.execute("""
+        SELECT open_questions, concepts, thinking_stage
+        FROM summaries WHERE domain_primary = ?
+    """, [current_domain]).fetchall()
+    # Target domain state
+    tgt_rows = db.execute("""
+        SELECT open_questions, concepts, thinking_stage
+        FROM summaries WHERE domain_primary = ?
+    """, [target_domain]).fetchall()
+    if not cur_rows:
+        return f"No data for current domain: {current_domain}"
+    if not tgt_rows:
+        return f"No data for target domain: {target_domain}"
+    # Aggregate current domain
+    cur_oq = set()
+    cur_concepts = set()
+    for row in cur_rows:
+        for q in _parse_json_field(row[0]):
+            if q and q.lower() != 'none identified': cur_oq.add(q)
+        for c in _parse_json_field(row[1]): cur_concepts.add(c)
+    cur_stage = cur_rows[0][2] or 'unknown'
+    # Aggregate target domain
+    tgt_concepts = set()
+    for row in tgt_rows:
+        for c in _parse_json_field(row[1]): tgt_concepts.add(c)
+    tgt_stage = tgt_rows[0][2] or 'unknown'
+    # Calculate cost
+    shared = cur_concepts & tgt_concepts
+    oq_cost = min(len(cur_oq) / 10.0, 1.0)
+    overlap_discount = min(len(shared) / max(len(cur_concepts), 1), 1.0)
+    # Stage cost: leaving executing/refining is expensive
+    stage_cost = {"executing": 0.8, "refining": 0.6, "crystallizing": 0.4, "exploring": 0.2}.get(cur_stage, 0.3)
+    score = round((oq_cost * 0.35) + (stage_cost * 0.35) - (overlap_discount * 0.3), 3)
+    score = max(0.0, min(1.0, score))
+    if score < 0.3: rec = "✅ Low cost — go for it"
+    elif score < 0.6: rec = "⚠️ Moderate — consider noting current open questions first"
+    else: rec = "🔴 High cost — significant unfinished work in current domain"
+    output = [f"## 🔀 Switching Cost: {current_domain} → {target_domain}\n"]
+    output.append(f"### Score: **{score}** / 1.0  ({rec})\n")
+    output.append(f"**Current domain:** {current_domain}")
+    output.append(f"  Stage: {cur_stage}")
+    output.append(f"  Open questions: {len(cur_oq)}")
+    output.append(f"  Concepts: {len(cur_concepts)}")
+    output.append(f"\n**Target domain:** {target_domain}")
+    output.append(f"  Stage: {tgt_stage}")
+    output.append(f"  Conversations: {len(tgt_rows)}")
+    output.append(f"  Concepts: {len(tgt_concepts)}")
+    output.append(f"\n**Overlap:** {len(shared)} shared concepts")
+    if shared:
+        output.append(f"  {', '.join(sorted(shared)[:10])}")
+    output.append(f"\n**Cost breakdown:**")
+    output.append(f"  Abandonment (open Qs): {oq_cost:.2f}")
+    output.append(f"  Stage penalty ({cur_stage}): {stage_cost:.2f}")
+    output.append(f"  Overlap discount: -{overlap_discount:.2f}")
+    if cur_oq:
+        output.append(f"\n**Questions you'd leave behind:**")
+        for q in list(cur_oq)[:5]: output.append(f"  ❓ {q}")
+    return "\n".join(output)
+
+
+@mcp.tool()
+def cognitive_patterns(domain: str = None) -> str:
+    """Analyze cognitive patterns and problem-solving approaches.
+    Answers: 'When do I think best?' with data."""
+    db = get_summaries_db()
+    where = f"WHERE domain_primary = '{domain}'" if domain else ""
+    rows = db.execute(f"""
+        SELECT cognitive_pattern, problem_solving_approach, importance,
+               emotional_tone, thinking_stage, content_category
+        FROM summaries {where}
+    """).fetchall()
+    if not rows:
+        return f"No data found{f' for domain: {domain}' if domain else ''}"
+    cols = ['cognitive_pattern','problem_solving_approach','importance',
+            'emotional_tone','thinking_stage','content_category']
+    pattern_counts, approach_counts, tone_counts = {}, {}, {}
+    bt_patterns, bt_approaches, bt_tones = {}, {}, {}
+    category_counts = {}
+    total, bt_total = len(rows), 0
+    for row in rows:
+        r = dict(zip(cols, row))
+        p = r['cognitive_pattern'] or ''
+        if p: pattern_counts[p] = pattern_counts.get(p, 0) + 1
+        a = r['problem_solving_approach'] or ''
+        if a: approach_counts[a] = approach_counts.get(a, 0) + 1
+        t = r['emotional_tone'] or ''
+        if t: tone_counts[t] = tone_counts.get(t, 0) + 1
+        cat = r['content_category'] or ''
+        if cat: category_counts[cat] = category_counts.get(cat, 0) + 1
+        if r['importance'] == 'breakthrough':
+            bt_total += 1
+            if p: bt_patterns[p] = bt_patterns.get(p, 0) + 1
+            if a: bt_approaches[a] = bt_approaches.get(a, 0) + 1
+            if t: bt_tones[t] = bt_tones.get(t, 0) + 1
+    output = [f"## 🧬 Cognitive Patterns{f' ({domain})' if domain else ''}\n"]
+    output.append(f"_Analyzed {total} conversations ({bt_total} breakthroughs)_\n")
+    output.append(f"### Cognitive Patterns")
+    for p, c in sorted(pattern_counts.items(), key=lambda x:-x[1])[:10]:
+        bt = bt_patterns.get(p, 0)
+        bt_mark = f" (💎×{bt})" if bt else ""
+        output.append(f"  {p}: {c} ({c/total*100:.0f}%){bt_mark}")
+    output.append(f"\n### Problem Solving Approaches")
+    for a, c in sorted(approach_counts.items(), key=lambda x:-x[1])[:10]:
+        bt = bt_approaches.get(a, 0)
+        bt_mark = f" (💎×{bt})" if bt else ""
+        output.append(f"  {a}: {c} ({c/total*100:.0f}%){bt_mark}")
+    output.append(f"\n### Emotional Tones")
+    for t, c in sorted(tone_counts.items(), key=lambda x:-x[1])[:8]:
+        bt = bt_tones.get(t, 0)
+        bt_mark = f" (💎×{bt})" if bt else ""
+        output.append(f"  {t}: {c}{bt_mark}")
+    if category_counts:
+        output.append(f"\n### Content Categories")
+        for cat, c in sorted(category_counts.items(), key=lambda x:-x[1])[:8]:
+            output.append(f"  {cat}: {c}")
+    if bt_patterns:
+        top_bt = max(bt_patterns, key=bt_patterns.get)
+        output.append(f"\n### 💎 Breakthrough Insight")
+        output.append(f"Your breakthroughs most associate with **{top_bt}** thinking")
+        if bt_tones:
+            top_tone = max(bt_tones, key=bt_tones.get)
+            output.append(f"and tend to happen when you're in a **{top_tone}** emotional state.")
+    return "\n".join(output)
+
+
+@mcp.tool()
+def open_threads(limit_per_domain: int = 5, max_domains: int = 20) -> str:
+    """Global inventory of ALL open questions across ALL domains.
+    The 'unfinished business' dashboard."""
+    db = get_summaries_db()
+    rows = db.execute("""
+        SELECT domain_primary, open_questions, importance, thinking_stage
+        FROM summaries
+        WHERE domain_primary != '' AND domain_primary IS NOT NULL
+    """).fetchall()
+    if not rows:
+        return "No data found."
+    domain_data = {}
+    for domain, oq_str, importance, stage in rows:
+        if domain not in domain_data:
+            domain_data[domain] = {"questions": [], "count": 0, "bt": 0, "stage": stage}
+        domain_data[domain]["count"] += 1
+        if importance == "breakthrough": domain_data[domain]["bt"] += 1
+        for q in _parse_json_field(oq_str):
+            if q and q.lower() != 'none identified' and q not in domain_data[domain]["questions"]:
+                domain_data[domain]["questions"].append(q)
+    # Filter domains with open questions, sort by question count
+    active = [(d, v) for d, v in domain_data.items() if v["questions"]]
+    active.sort(key=lambda x: (-x[1]["bt"], -len(x[1]["questions"])))
+    total_q = sum(len(v["questions"]) for _, v in active)
+    output = [f"## 🧵 Open Threads\n"]
+    output.append(f"**{total_q} open questions** across **{len(active)} domains**\n")
+    for domain, data in active[:max_domains]:
+        bt = f" 💎×{data['bt']}" if data['bt'] else ""
+        output.append(f"### {domain}{bt} ({len(data['questions'])} questions, {data['count']} convos)")
+        for q in data["questions"][:limit_per_domain]:
+            output.append(f"  ❓ {q}")
+        if len(data["questions"]) > limit_per_domain:
+            output.append(f"  _... and {len(data['questions'])-limit_per_domain} more_")
+        output.append("")
+    return "\n".join(output)
+
+
+@mcp.tool()
+def trust_dashboard() -> str:
+    """System-wide stats proving the prosthetic works.
+    Shows everything that's preserved: conversations, domains, questions, decisions.
+    The 'everything is okay' view."""
+    db = get_summaries_db()
+    # Total stats
+    stats = db.execute("""
+        SELECT COUNT(*) as total,
+               COUNT(DISTINCT domain_primary) as domains,
+               COUNT(CASE WHEN importance = 'breakthrough' THEN 1 END) as breakthroughs
+        FROM summaries
+    """).fetchone()
+    total, domains, breakthroughs = stats
+    # Count open questions and decisions
+    rows = db.execute("SELECT open_questions, decisions FROM summaries").fetchall()
+    total_oq, total_dec = 0, 0
+    for oq_str, dec_str in rows:
+        oqs = _parse_json_field(oq_str)
+        total_oq += sum(1 for q in oqs if q and q.lower() != 'none identified')
+        total_dec += len(_parse_json_field(dec_str))
+    # Source breakdown
+    sources = db.execute("""
+        SELECT source, COUNT(*) as count FROM summaries GROUP BY source ORDER BY count DESC
+    """).fetchall()
+    # Domain status
+    domain_rows = db.execute("""
+        SELECT domain_primary, COUNT(*) as count,
+               MAX(thinking_stage) as stage,
+               COUNT(CASE WHEN importance='breakthrough' THEN 1 END) as bt
+        FROM summaries
+        WHERE domain_primary != '' AND domain_primary IS NOT NULL
+        GROUP BY domain_primary
+        ORDER BY count DESC
+    """).fetchall()
+    # Count domains with open questions
+    oq_domains = set()
+    for row in db.execute("SELECT domain_primary, open_questions FROM summaries").fetchall():
+        for q in _parse_json_field(row[1]):
+            if q and q.lower() != 'none identified':
+                oq_domains.add(row[0])
+                break
+    output = [f"## 🛡️ Trust Dashboard\n"]
+    output.append(f"_Your cognitive safety net — proof that nothing is lost_\n")
+    output.append(f"### 📊 Global Metrics")
+    output.append(f"  **Conversations indexed:** {total:,}")
+    output.append(f"  **Domains tracked:** {domains}")
+    output.append(f"  **Open questions preserved:** {total_oq:,}")
+    output.append(f"  **Decisions preserved:** {total_dec:,}")
+    output.append(f"  **Breakthroughs captured:** {breakthroughs} 💎")
+    output.append(f"  **Domains with active threads:** {len(oq_domains)}")
+    output.append(f"\n### 📡 Sources")
+    for src, count in sources:
+        output.append(f"  {src}: {count:,}")
+    output.append(f"\n### 🗺️ Domain Coverage (top 15)")
+    for domain, count, stage, bt in domain_rows[:15]:
+        bt_mark = f" 💎×{bt}" if bt else ""
+        has_oq = " 🔴" if domain in oq_domains else " ✅"
+        output.append(f"  {domain}: {count} convos ({stage or '?'}){bt_mark}{has_oq}")
+    output.append(f"\n### 🔑 Safety Net Status")
+    output.append(f"  {'🟢' if total > 5000 else '🟡'} Coverage: {total:,} conversations")
+    output.append(f"  {'🟢' if domains > 15 else '🟡'} Breadth: {domains} domains")
+    output.append(f"  {'🟢' if breakthroughs > 10 else '🟡'} Depth: {breakthroughs} breakthroughs captured")
+    output.append(f"  {'🔴' if len(oq_domains) > 10 else '🟢'} Open threads: {len(oq_domains)} domains need attention")
+    return "\n".join(output)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2946,7 +3409,7 @@ def query_discovery_summary() -> str:
 @mcp.resource("brain://stats")
 def resource_stats() -> str:
     """Current brain statistics."""
-    return brain_stats("all")
+    return brain_stats("overview")
 
 @mcp.resource("brain://principles")
 def resource_principles() -> str:
@@ -2956,7 +3419,7 @@ def resource_principles() -> str:
 @mcp.resource("brain://embeddings")
 def resource_embeddings() -> str:
     """Embedding statistics."""
-    return brain_stats("embeddings")
+    return brain_stats(view="embeddings")
 
 
 # Pre-warm models on startup for fast first query
