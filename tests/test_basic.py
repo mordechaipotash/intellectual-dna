@@ -35,7 +35,7 @@ class TestConfig:
         assert cfg.vectors_dir == Path("./vectors")
         assert cfg.embedding.model == "nomic-ai/nomic-embed-text-v1.5"
         assert cfg.embedding.dim == 768
-        assert cfg.server_name == "brain"
+        assert cfg.server_name == "my-brain"
         assert len(cfg.domains) > 0
 
     def test_load_from_yaml(self, tmp_path):

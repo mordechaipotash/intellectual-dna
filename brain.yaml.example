@@ -36,7 +36,7 @@ embedding:
 summarizer:
   enabled: false
   provider: anthropic  # or "openai", "local" (ollama)
-  model: claude-sonnet-4-20250514
+  model: claude-sonnet-4-20250514  # or any model from your provider
   api_key_env: ANTHROPIC_API_KEY  # env var containing your API key
   max_concurrent: 3
 

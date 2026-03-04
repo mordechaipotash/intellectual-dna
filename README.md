@@ -75,6 +75,14 @@ brain-mcp setup windsurf         # Windsurf
 
 ---
 
+## Using It
+
+After setup, just say **"use brain"** in any conversation with Claude, Cursor, or Windsurf. Your AI instantly gains access to your full thinking history.
+
+That's it. No special syntax. Just talk to your AI and it searches your brain when relevant.
+
+---
+
 ## What You Can Do
 
 | Ask your AI | What happens |

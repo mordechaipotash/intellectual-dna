@@ -1,0 +1,4 @@
+# Binary assets — mark as binary, track normally (no LFS for now)
+assets/*.mp4 binary
+assets/*.gif binary
+assets/*.png binary

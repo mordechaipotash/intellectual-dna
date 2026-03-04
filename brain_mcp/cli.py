@@ -18,8 +18,14 @@ def discover_sources():
 
     checks = [
         ("Claude Code", "claude-code", Path.home() / ".claude" / "projects", "jsonl"),
+        ("Claude Desktop", "claude-desktop", Path.home() / "Library" / "Application Support" / "Claude" / "chat_conversations", "jsonl"),
         ("Clawdbot", "clawdbot", Path.home() / ".clawdbot" / "agents", "jsonl"),
     ]
+
+    # Also check Linux/Windows Claude Desktop path
+    import platform
+    if platform.system() != "Darwin":
+        checks[1] = ("Claude Desktop", "claude-desktop", Path.home() / ".config" / "Claude" / "chat_conversations", "jsonl")
 
     console.print("\n[bold]Discovering AI conversations...[/bold]\n")
 
@@ -423,6 +429,85 @@ def cmd_status(args):
     print(f"Brain: {msg_count:,} messages | {vec_count:,} vectors | {sources} sources")
 
 
+def cmd_version(args):
+    """Print version."""
+    from brain_mcp import __version__
+    print(f"brain-mcp {__version__}")
+
+
+def cmd_summarize(args):
+    """Generate structured conversation summaries."""
+    from rich.console import Console
+    console = Console()
+
+    from brain_mcp.config import load_config, set_config, get_config
+    config_path = getattr(args, 'config', None) or DEFAULT_CONFIG_PATH
+    if config_path and Path(config_path).exists():
+        set_config(load_config(str(config_path)))
+
+    cfg = get_config()
+
+    if not cfg.summarizer.enabled:
+        console.print("\n[yellow]Summarization is not configured.[/yellow]\n")
+        console.print("Summaries extract decisions, open questions, and key quotes")
+        console.print("from each conversation. Powers the 8 prosthetic tools.\n")
+        console.print("To enable, edit your config file and set:")
+        console.print("  summarizer:")
+        console.print("    enabled: true")
+        console.print("    provider: anthropic  # or openai")
+        console.print(f"    api_key_env: ANTHROPIC_API_KEY\n")
+        console.print("Or configure via the dashboard:")
+        console.print("  brain-mcp dashboard\n")
+        console.print("[dim]Without summaries, all search + basic prosthetic tools still work.[/dim]")
+        return
+
+    try:
+        from brain_mcp.summarize.summarize import run_summarizer
+        console.print("\n[bold]Generating conversation summaries...[/bold]\n")
+        run_summarizer(cfg)
+        console.print("\n[green]Summarization complete.[/green]\n")
+    except ImportError:
+        console.print("[red]Summarizer module not found.[/red]")
+        console.print("Install with: pip install brain-mcp[summarize]")
+    except Exception as e:
+        console.print(f"[red]Summarization error: {e}[/red]")
+
+
+def cmd_dashboard(args):
+    """Start the Brain MCP dashboard."""
+    try:
+        from brain_mcp.dashboard.app import create_app
+        import uvicorn
+
+        port = getattr(args, 'port', 8742) or 8742
+        no_open = getattr(args, 'no_open', False)
+
+        from brain_mcp.config import load_config, set_config
+        config_path = getattr(args, 'config', None) or DEFAULT_CONFIG_PATH
+        if config_path and Path(config_path).exists():
+            set_config(load_config(str(config_path)))
+
+        app = create_app()
+
+        if not no_open:
+            import threading
+            import webbrowser
+            threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+
+        print(f"🧠 Brain MCP Dashboard → http://localhost:{port}")
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    except ImportError:
+        from rich.console import Console
+        console = Console()
+        console.print("\n[yellow]Dashboard not yet available.[/yellow]")
+        console.print("The dashboard is coming in v0.2.0.\n")
+        console.print("For now, use the CLI commands:")
+        console.print("  brain-mcp init --full    Import everything")
+        console.print("  brain-mcp setup claude   Connect to Claude")
+        console.print("  brain-mcp doctor         Health check")
+        console.print("  brain-mcp status         Quick status\n")
+
+
 def cmd_sync(args):
     """Incremental sync -- ingest new + embed new."""
     from rich.console import Console
@@ -469,6 +554,17 @@ def main():
     # sync
     sub.add_parser("sync", help="Incremental update")
 
+    # version
+    sub.add_parser("version", help="Print version")
+
+    # summarize
+    sub.add_parser("summarize", help="Generate conversation summaries")
+
+    # dashboard
+    p_dash = sub.add_parser("dashboard", help="Open the web dashboard")
+    p_dash.add_argument("--port", type=int, default=8742, help="Port (default: 8742)")
+    p_dash.add_argument("--no-open", action="store_true", help="Don't open browser")
+
     args = parser.parse_args()
 
     commands = {
@@ -480,10 +576,16 @@ def main():
         "doctor": cmd_doctor,
         "status": cmd_status,
         "sync": cmd_sync,
+        "version": cmd_version,
+        "summarize": cmd_summarize,
+        "dashboard": cmd_dashboard,
     }
 
     if args.command in commands:
         commands[args.command](args)
+    elif args.command is None:
+        # No subcommand → open dashboard (dashboard-first UX)
+        cmd_dashboard(args)
     else:
         parser.print_help()
 
