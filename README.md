@@ -20,6 +20,10 @@
   <b><a href="https://brainmcp.dev">📚 Documentation</a></b> · <b><a href="https://brainmcp.dev/docs/quickstart">🚀 Quickstart</a></b> · <b><a href="https://brainmcp.dev/faq">❓ FAQ</a></b> · <b><a href="https://brainmcp.dev/docs/tools">🔧 All 25 Tools</a></b>
 </p>
 
+<p align="center">
+  <sub>If this is useful, a ⭐ helps others find it.</sub>
+</p>
+
 ---
 
 ## Install
@@ -195,6 +199,18 @@ Every tool works at every tier — just with increasing depth:
 
 ---
 
+
+## 🔒 Privacy & Security
+
+- **100% local** — all data stays on your machine
+- **No telemetry** — zero tracking, zero phone-home
+- **No cloud dependency** — works offline after initial setup
+- **No accounts** — no sign-up, no API keys for core features
+- **You own everything** — MIT licensed, your data is yours
+- **Open source** — audit every line of code
+
+---
+
 ## CLI
 
 ```bash
@@ -244,36 +260,7 @@ brain-mcp status            # One-line status
 | **[mordenews](https://github.com/mordechaipotash/mordenews)** | Automated daily AI podcast |
 | **[live-translate](https://github.com/mordechaipotash/live-translate)** | Real-time Hebrew→English translation |
 
----
-
-
-## 🔒 Privacy & Security
-
-- **100% local** — all data stays on your machine
-- **No telemetry** — zero tracking, zero phone-home
-- **No cloud dependency** — works offline after initial setup
-- **No accounts** — no sign-up, no API keys for core features
-- **You own everything** — MIT licensed, your data is yours
-- **Open source** — audit every line of code
-
----
-
-## Documentation
-
-## 🔒 Privacy & Security
-
-- **100% local** — all data stays on your machine
-- **No telemetry** — zero tracking, zero phone-home
-- **No cloud dependency** — works offline after initial setup
-- **No accounts** — no sign-up, no API keys for core features
-- **You own everything** — MIT licensed, your data is yours
-- **Open source** — audit every line of code
-
-
-Full documentation at **[brainmcp.dev](https://brainmcp.dev)** — quickstart, tool reference, integration guides, and FAQ.
-
----
-
+--
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and PR guidelines. All contributions welcome.
@@ -290,6 +277,6 @@ MIT — see [LICENSE](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for version his
 
 *Built because losing your train of thought shouldn't mean starting over.*
 
-**[brainmcp.dev](https://brainmcp.dev)**
+**[brainmcp.dev](https://brainmcp.dev)** · **[Full Docs](https://brainmcp.dev/docs/quickstart)** · **[PyPI](https://pypi.org/project/brain-mcp/)**
 
 </div>
