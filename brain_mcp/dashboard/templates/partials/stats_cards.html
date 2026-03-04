@@ -1,0 +1,25 @@
+<!-- Stats cards partial — returned by /api/stats/overview -->
+<article>
+    <hgroup>
+        <h2>{{ "{:,}".format(messages) }}</h2>
+        <p>Messages</p>
+    </hgroup>
+</article>
+<article>
+    <hgroup>
+        <h2>{{ "{:,}".format(embedded) }}</h2>
+        <p>Embedded</p>
+    </hgroup>
+</article>
+<article>
+    <hgroup>
+        <h2>{{ "{:,}".format(summaries) }}</h2>
+        <p>Summaries</p>
+    </hgroup>
+</article>
+<article>
+    <hgroup>
+        <h2>{{ tools_ok }}/{{ tools_total }}</h2>
+        <p>Tools OK</p>
+    </hgroup>
+</article>

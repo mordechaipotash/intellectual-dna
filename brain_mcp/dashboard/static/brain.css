@@ -1,0 +1,69 @@
+/* brain-mcp dashboard — custom overrides for Pico CSS */
+
+/* Nav active link */
+nav a.active {
+    color: var(--pico-primary-color);
+    font-weight: bold;
+}
+
+/* Stats cards */
+article hgroup h2 {
+    margin-bottom: 0;
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--pico-primary-color);
+}
+article hgroup p {
+    margin-top: 0.25rem;
+    color: var(--pico-muted-color);
+    font-size: 0.9rem;
+}
+
+/* Sparkline bar chart */
+.sparkline {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 64px;
+    padding: 4px 0;
+}
+.sparkline .bar {
+    flex: 1;
+    min-width: 3px;
+    max-width: 12px;
+    background: var(--pico-primary-color);
+    border-radius: 2px 2px 0 0;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+.sparkline .bar:hover {
+    opacity: 1;
+}
+
+/* Search results similarity dots */
+.sim-high { color: #3fb950; }
+.sim-med { color: #d29922; }
+.sim-low { color: #f85149; }
+
+/* Footer */
+footer {
+    margin-top: 3rem;
+    padding: 1rem 0;
+    text-align: center;
+    border-top: 1px solid var(--pico-muted-border-color);
+}
+
+/* Loading states */
+[aria-busy="true"] {
+    min-height: 60px;
+}
+
+/* Responsive grid tweaks */
+@media (max-width: 768px) {
+    article hgroup h2 {
+        font-size: 1.8rem;
+    }
+    .sparkline {
+        height: 40px;
+    }
+}

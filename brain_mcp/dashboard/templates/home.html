@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Brain MCP — Dashboard{% endblock %}
+
+{% block content %}
+<h1>🧠 Brain MCP</h1>
+
+<!-- Stats cards — loaded via htmx on page load -->
+<div class="grid" id="stats-cards"
+     hx-get="/api/stats/overview"
+     hx-trigger="load"
+     hx-target="#stats-cards"
+     hx-swap="innerHTML">
+    <article aria-busy="true">Loading stats...</article>
+</div>
+
+<!-- Activity sparkline -->
+<article>
+    <header>📊 Activity (last 30 days)</header>
+    <div id="activity-chart"
+         hx-get="/api/stats/activity?days=30"
+         hx-trigger="load"
+         hx-target="#activity-chart"
+         hx-swap="innerHTML">
+        <progress></progress>
+    </div>
+</article>
+
+<!-- Two-column layout: Sources + Open Threads -->
+<div class="grid">
+    <!-- Sources health -->
+    <article>
+        <header>🧩 Sources</header>
+        <div id="sources-health"
+             hx-get="/api/stats/sources"
+             hx-trigger="load"
+             hx-target="#sources-health"
+             hx-swap="innerHTML">
+            <progress></progress>
+        </div>
+    </article>
+
+    <!-- Open threads -->
+    <article>
+        <header>📌 Open Threads</header>
+        <div id="open-threads"
+             hx-get="/api/stats/domains"
+             hx-trigger="load"
+             hx-target="#open-threads"
+             hx-swap="innerHTML">
+            <progress></progress>
+        </div>
+    </article>
+</div>
+
+<!-- Sync status -->
+<article>
+    <div class="grid">
+        <div>
+            <small id="sync-status"
+                   hx-get="/api/stats/sync-status"
+                   hx-trigger="load"
+                   hx-target="#sync-status"
+                   hx-swap="innerHTML">
+                Checking sync status...
+            </small>
+        </div>
+        <div style="text-align: right;">
+            <button class="outline"
+                    hx-post="/api/sources/sync-all"
+                    hx-target="#sync-status"
+                    hx-swap="innerHTML">
+                🔄 Sync Now
+            </button>
+        </div>
+    </div>
+</article>
+{% endblock %}
