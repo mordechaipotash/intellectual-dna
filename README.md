@@ -42,49 +42,59 @@ Restart Claude. Done. **25 tools available.**
 
 | Ask your AI | What happens |
 |-------------|-------------|
-| "Search my conversations about auth" | Finds 23 conversations across 8 months, with quotes |
-| "What do I think about microservices?" | Synthesizes your views from 31 past conversations |
-| "Where did I leave off with the DB redesign?" | Reconstructs your context — open questions, last decisions, 12ms |
-| "How has my thinking about testing evolved?" | Tracks your opinion trajectory over time |
-| "Should I switch to a monorepo?" | Checks alignment with your stated principles |
-| "What would it cost to switch focus right now?" | Quantifies switching cost — open threads you'd abandon |
+| "What did I figure out about sleep last month?" | Finds your insights across 12 conversations you forgot you had |
+| "Search everything I've discussed about marketing" | 23 conversations across 8 months, with quotes — in 12ms |
+| "Where did I leave off with the business plan?" | Reconstructs your context — open questions, decisions, next steps |
+| "How has my thinking about career changes evolved?" | Tracks your opinion trajectory from doubt → clarity |
+| "What would it cost to switch focus right now?" | Quantifies what you'd abandon — open threads, unfinished thinking |
+| "What do I actually think about AI?" | Synthesizes YOUR views from 31 past conversations into one answer |
+
+Works for **researchers, writers, students, founders, developers** — anyone who thinks with AI.
 
 ---
 
 ## The Problem Nobody Talks About
 
-You're mid-sprint on an auth system. You get pulled into a meeting about the data pipeline. Two hours later, you can't remember what you were doing. Not just "where was I in the code" — you've lost the *entire mental model*. The decisions you'd already made. The approach you'd chosen. The three things you'd decided *not* to do and why.
+You had a breakthrough at 2am last Tuesday. You laid out a whole framework in a conversation with Claude. It was brilliant.
 
-Most memory tools store *facts*. brain-mcp reconstructs *cognitive state* — where you were in a problem, what you'd decided, what questions were still open, and what it would cost to switch away.
+You can't find it. You can't even remember which conversation it was in.
+
+**Every week, millions of people pour their best thinking into AI conversations — and lose all of it.** ChatGPT's "memory" stores a few fun facts. Claude's import tool gives you a markdown summary of a summary. None of them let you *search your own thinking*.
+
+brain-mcp doesn't store facts. It reconstructs **cognitive state** — where you were in a problem, what you'd decided, what questions were still open, and what it would cost to switch away.
+
+> *Built with ADHD in mind. If your brain drops context constantly, this is your external hard drive.*
 
 ### Without vs. With
 
-**Without:**
+**Without brain-mcp:**
 
-> *"I was working on something with embeddings last month... let me check my chat history... which conversation was it..."*
+> *"I had this great idea about the business plan last month... let me search my chat history... which conversation was it... was it ChatGPT or Claude..."*
 >
-> **30 minutes later:** Maybe 60% recovered.
+> **30 minutes later:** Maybe 60% recovered. If you're lucky.
 
-**With:**
+**With brain-mcp:**
 
 ```
-> tunnel_state("ai-dev")
+> "Where did I leave off with the business strategy?"
 
-🧠 ai-dev — executing stage
-Open questions: 38 | Decisions made: 33
+🧠 business-strategy — exploring stage
+Open questions: 12 | Decisions made: 8
 
 ❓ Top open:
-  - What are the results of the 3-model A/B test?
-  - How does the improved prompt v6 perform?
+  - Should I focus on B2B or B2C first?
+  - What pricing model fits the early stage?
 
 ✅ Recent decisions:
-  - Run the 3-model A/B test using prompt v6
-  - Upgrade to GPT-4o structured output
+  - Target solo developers initially
+  - Open-source core, paid hosting layer
+
+💬 Found across: 15 ChatGPT + 8 Claude + 3 Claude Code conversations
 
 ⏱️ 12ms
 ```
 
-12 milliseconds to reconstruct the mental state that took weeks to build. That's real data, not a mockup.
+12 milliseconds to reconstruct the mental state that took weeks to build. Across every AI tool you've used. That's real data, not a mockup.
 
 ---
 
