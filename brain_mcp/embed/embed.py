@@ -67,10 +67,19 @@ def embed_messages(full: bool = False):
     lance_path = cfg.lance_path
     batch_size = cfg.embedding.batch_size
     max_chars = cfg.embedding.max_chars
-    chunk_size = min(batch_size * 10, 500)  # Process in manageable chunks
+    chunk_size = min(batch_size * 5, 250)  # Smaller chunks for memory safety
 
     if not parquet_path.exists():
         print(f"Error: {parquet_path} not found. Run ingest first.", flush=True)
+        sys.exit(1)
+
+    # Memory warning
+    import shutil
+    _, _, free_disk = shutil.disk_usage(str(parquet_path.parent))
+    free_gb = free_disk / (1024**3)
+    if free_gb < 2:
+        print(f"⚠️  Low disk space: {free_gb:.1f}GB free. Embedding needs ~1-2GB.", flush=True)
+        print("   Free up disk space or use: brain-mcp embed --provider openai", flush=True)
         sys.exit(1)
 
     # Load conversations — only columns we need

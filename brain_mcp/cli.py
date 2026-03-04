@@ -209,15 +209,33 @@ def cmd_setup(args):
     client = args.client
 
     # Determine config file path
-    if client == "claude":
-        config_file = Path.home() / ".claude" / "mcp.json"
+    import platform
+    is_mac = platform.system() == "Darwin"
+
+    if client == "claude-desktop":
+        if is_mac:
+            config_file = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        else:
+            config_file = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    elif client == "claude-code":
+        config_file = Path.home() / ".claude.json"
+    elif client == "claude":
+        # Auto-detect: prefer Desktop if it exists, else Claude Code
+        desktop = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json" if is_mac else Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        code = Path.home() / ".claude.json"
+        if desktop.exists():
+            config_file = desktop
+            console.print(f"   [dim]Detected Claude Desktop[/dim]")
+        else:
+            config_file = code
+            console.print(f"   [dim]Detected Claude Code[/dim]")
     elif client == "cursor":
         config_file = Path.home() / ".cursor" / "mcp.json"
     elif client == "windsurf":
         config_file = Path.home() / ".windsurf" / "mcp.json"
     else:
         console.print(f"[red]Unknown client: {client}[/red]")
-        console.print("Supported: claude, cursor, windsurf")
+        console.print("Supported: claude, claude-desktop, claude-code, cursor, windsurf")
         return
 
     # Read existing config or create new
@@ -235,8 +253,12 @@ def cmd_setup(args):
         console.print(f"[yellow]Brain MCP already configured in {config_file}[/yellow]")
         return
 
+    # Use full path to brain-mcp so Claude can find it
+    import shutil
+    brain_cmd = shutil.which("brain-mcp") or "brain-mcp"
+
     config["mcpServers"]["brain"] = {
-        "command": "brain-mcp",
+        "command": brain_cmd,
         "args": ["serve"],
     }
 
