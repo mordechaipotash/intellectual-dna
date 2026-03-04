@@ -21,7 +21,7 @@ That's it. Restart Claude Code, and ask: *"Search my past conversations about au
 ### Alternative: pip install
 
 ```bash
-pip install brain-mcp
+pip install git+https://github.com/mordechaipotash/brain-mcp.git
 brain-mcp init --full
 brain-mcp setup claude
 ```
