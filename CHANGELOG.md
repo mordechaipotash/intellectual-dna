@@ -2,6 +2,18 @@
 
 All notable changes to Brain MCP will be documented in this file.
 
+## [0.1.9] — 2026-03-04
+
+### Added — Dashboard (feature-complete)
+- **Home page**: Live stats cards, activity sparkline, sync status, recent searches, source overview, domain threads
+- **Search page**: 3 modes (semantic/keyword/summaries), debounced input, filters (source/role/date), conversation viewer with highlighting, search history, load-more pagination
+- **Sources page**: Auto-discovery, source cards with stats, sync-all, per-source re-ingest, SSE progress streaming
+- **Onboarding wizard**: 5-step Alpine.js stepper (discover → ingest → embedding → summaries → connect), MCP config generation, auto-configure for Claude/Cursor
+- **Tool status page**: 25 tools grouped by 7 categories, health detection across 5 data layers, individual + batch testing with latency, interactive tool runner, fix suggestions for degraded tools
+- **Settings page**: Config management (TOML read/write), disk usage, embedding/summary status bars, API key validation, cron install/remove/status, MCP config export
+- **Background task system**: TaskManager with SSE streaming, thread-safe updates, used across sync/test operations
+- 100 tests (58 core + 42 dashboard), all passing
+
 ## [0.1.8] — 2026-03-04
 
 ### Added
