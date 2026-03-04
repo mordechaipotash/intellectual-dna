@@ -254,11 +254,14 @@ def cmd_setup(args):
         else:
             config_file = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
     elif client in ("claude-code", "code"):
-        config_file = Path.home() / ".claude" / "mcp.json"
+        # Claude Code stores MCP servers in ~/.claude.json (user scope)
+        # NOT in ~/.claude/mcp.json (that's not a Claude Code file)
+        # See: https://code.claude.com/docs/en/mcp#user-scope
+        config_file = Path.home() / ".claude.json"
     elif client == "claude":
         # Auto-detect: set up BOTH if they exist, else whichever is found
         desktop = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json" if is_mac else Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
-        code = Path.home() / ".claude" / "mcp.json"
+        code = Path.home() / ".claude.json"
 
         targets = []
         if desktop.parent.exists():
@@ -352,7 +355,7 @@ def cmd_doctor(args):
     desktop_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json" if is_mac else Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
     for name, path in [
         ("Claude Desktop", desktop_path),
-        ("Claude Code", Path.home() / ".claude" / "mcp.json"),
+        ("Claude Code", Path.home() / ".claude.json"),
         ("Cursor", Path.home() / ".cursor" / "mcp.json"),
     ]:
         if path.exists():
