@@ -139,7 +139,16 @@ def cmd_init(args):
 
     if args.full and sources:
         cmd_ingest(args)
-        cmd_embed(args)
+        try:
+            cmd_embed(args)
+        except Exception as e:
+            if "sentence_transformers" in str(e) or "No module named" in str(e):
+                console.print("\n[yellow]Embedding skipped — sentence-transformers not installed.[/yellow]")
+                console.print("   Keyword search works now. For semantic search:")
+                console.print("   pipx inject brain-mcp sentence-transformers einops")
+                console.print("   brain-mcp embed")
+            else:
+                raise
         console.print("\n[bold green]Your brain is ready![/bold green]\n")
         console.print("Next steps:")
         console.print("   brain-mcp setup claude          Connect to Claude Desktop + Code")
@@ -218,14 +227,18 @@ def _write_mcp_config(config_file, console, label=None):
     if "mcpServers" not in config:
         config["mcpServers"] = {}
 
-    if "brain" in config["mcpServers"]:
-        console.print(f"[yellow]Brain MCP already configured in {config_file}[/yellow]")
+    # Use "brain-mcp" as key (not "brain") to avoid colliding with
+    # users who may have a personal brain server already configured
+    server_key = "brain-mcp"
+
+    if server_key in config["mcpServers"]:
+        console.print(f"[yellow]brain-mcp already configured in {config_file}[/yellow]")
         return
 
     # Use full path to brain-mcp so the client can find it
     brain_cmd = shutil.which("brain-mcp") or "brain-mcp"
 
-    config["mcpServers"]["brain"] = {
+    config["mcpServers"][server_key] = {
         "command": brain_cmd,
         "args": ["serve"],
     }
@@ -362,7 +375,7 @@ def cmd_doctor(args):
             with open(path) as f:
                 try:
                     cfg_json = json.load(f)
-                    if "brain" in cfg_json.get("mcpServers", {}):
+                    if "brain-mcp" in cfg_json.get("mcpServers", {}):
                         console.print(f"   [green]ok[/green] {name}: configured")
                     else:
                         console.print(f"   [dim]--  {name}: not configured[/dim]")
