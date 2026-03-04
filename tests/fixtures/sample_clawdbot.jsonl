@@ -1,0 +1,6 @@
+{"type":"session","id":"test-session-001"}
+{"type":"model_change","modelId":"claude-sonnet-4-20250514"}
+{"type":"message","id":"msg1","timestamp":"2025-01-15T10:30:00Z","message":{"role":"user","content":[{"type":"text","text":"How do I set up a Python virtual environment?"}]}}
+{"type":"message","id":"msg2","timestamp":"2025-01-15T10:30:30Z","message":{"role":"assistant","content":[{"type":"text","text":"To create a Python virtual environment, run: python3 -m venv myenv"}]}}
+{"type":"message","id":"msg3","timestamp":"2025-01-15T10:31:00Z","message":{"role":"user","content":[{"type":"text","text":"What about installing packages inside it?"}]}}
+{"type":"message","id":"msg4","timestamp":"2025-01-15T10:31:30Z","message":{"role":"assistant","content":[{"type":"text","text":"Activate the venv first with: source myenv/bin/activate, then use pip install."}]}}

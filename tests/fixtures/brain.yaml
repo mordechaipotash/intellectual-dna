@@ -1,0 +1,20 @@
+# Test configuration for brain-mcp tests
+data_dir: ./test_data
+vectors_dir: ./test_vectors
+
+sources: []
+
+embedding:
+  model: nomic-ai/nomic-embed-text-v1.5
+  dim: 768
+  batch_size: 10
+  max_chars: 4000
+
+summarizer:
+  enabled: false
+
+domains:
+  - ai-dev
+  - backend-dev
+  - frontend-dev
+  - personal

@@ -1,0 +1,50 @@
+# Principles Template for brain-mcp
+#
+# These principles are used by the alignment_check tool to evaluate
+# whether a decision aligns with your stated values.
+#
+# Copy this file and customize it with your own principles.
+# Reference it in brain.yaml under principles.path
+
+principles:
+  focus:
+    name: Deep Focus Over Breadth
+    definition: >
+      Depth beats breadth. Mastering one domain creates more value
+      than superficial knowledge of many. Resist the urge to spread
+      attention across too many simultaneous projects.
+    applications:
+      - Say no to opportunities that fragment focus
+      - Finish before starting something new
+      - Depth compounds; breadth dissipates
+
+  building:
+    name: Build Over Talk
+    definition: >
+      Working software, shipped products, and real results matter more
+      than plans, pitches, and promises. Actions speak; words echo.
+    applications:
+      - Prototype before proposing
+      - Ship imperfect work early, iterate
+      - Time spent building > time spent planning
+
+  ownership:
+    name: Own Your Infrastructure
+    definition: >
+      Control the tools you depend on. Self-hosted beats SaaS when the
+      stakes are high. Understanding your stack end-to-end is a superpower.
+    applications:
+      - Self-host where data sovereignty matters
+      - Learn the layer below your abstraction
+      - Vendor lock-in is technical debt
+
+  honesty:
+    name: Intellectual Honesty
+    definition: >
+      Pursue truth over comfort. Update beliefs when evidence conflicts
+      with them. Admit what you don't know. The best decisions come from
+      clear-eyed assessment, not wishful thinking.
+    applications:
+      - Kill projects that aren't working
+      - Separate "I want this to be true" from "this is true"
+      - Document failures as carefully as successes

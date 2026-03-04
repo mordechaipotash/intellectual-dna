@@ -1,0 +1,34 @@
+[
+  {
+    "title": "Test Conversation",
+    "id": "conv-test-001",
+    "create_time": 1705000000.0,
+    "update_time": 1705001000.0,
+    "mapping": {
+      "root": {
+        "message": null,
+        "parent": null,
+        "children": ["msg-1"]
+      },
+      "msg-1": {
+        "message": {
+          "author": {"role": "user"},
+          "content": {"parts": ["What is the capital of France?"]},
+          "create_time": 1705000000.0
+        },
+        "parent": "root",
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"parts": ["The capital of France is Paris."]},
+          "create_time": 1705000010.0,
+          "metadata": {"model_slug": "gpt-4"}
+        },
+        "parent": "msg-1",
+        "children": []
+      }
+    }
+  }
+]
