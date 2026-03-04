@@ -1,14 +1,14 @@
 """Dashboard HTML page routes."""
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 router = APIRouter(tags=["pages"])
 
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Dashboard home page."""
+    """Dashboard home page. Redirects to onboarding if not set up."""
     templates = request.app.state.templates
 
     # Check if onboarding is needed
@@ -16,14 +16,25 @@ async def home(request: Request):
     try:
         cfg = get_config()
         if not cfg.parquet_path.exists():
-            return templates.TemplateResponse("onboarding.html", {
-                "request": request,
-                "active_page": "home",
-            })
+            # Check onboarding state file too
+            from brain_mcp.dashboard.routes.onboarding import _load_onboarding_state
+            state = _load_onboarding_state()
+            if not state.get("complete", False):
+                return RedirectResponse(url="/onboarding", status_code=302)
     except Exception:
         pass
 
     return templates.TemplateResponse("home.html", {
+        "request": request,
+        "active_page": "home",
+    })
+
+
+@router.get("/onboarding", response_class=HTMLResponse)
+async def onboarding_page(request: Request):
+    """Onboarding wizard page."""
+    templates = request.app.state.templates
+    return templates.TemplateResponse("onboarding.html", {
         "request": request,
         "active_page": "home",
     })
