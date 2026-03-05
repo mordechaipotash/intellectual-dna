@@ -21,7 +21,13 @@
             <p>Search speed</p>
         </hgroup>
     </article>
-    <article class="stat-card">
+    <article class="stat-card"
+             style="cursor:pointer"
+             hx-get="/api/stats/health-summary.html"
+             hx-target="#health-detail"
+             hx-swap="innerHTML"
+             hx-trigger="click"
+             hx-on::after-request="this.classList.toggle('expanded')">
         <hgroup>
             <span class="stat-icon">✅</span>
             {% if tools_ok == tools_total %}
@@ -31,6 +37,10 @@
             <h2>{{ tools_total - tools_ok }} need attention</h2>
             <p>{{ tools_ok }}/{{ tools_total }} tools working</p>
             {% endif %}
+            <small><a href="/tools">See details →</a></small>
         </hgroup>
     </article>
 </div>
+
+<!-- Health detail expands here -->
+<div id="health-detail"></div>

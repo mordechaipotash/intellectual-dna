@@ -102,6 +102,54 @@ def _get_search_speed() -> str:
         return "< 15ms"
 
 
+@router.get("/health-summary.html", response_class=HTMLResponse)
+async def health_summary_html(request: Request):
+    """Inline health summary — loaded via htmx when health card is clicked."""
+    from brain_mcp.dashboard.routes.tools import (
+        TOOLS, _check_data_available, _tool_status, _status_icon,
+    )
+
+    available = _check_data_available()
+
+    # Group tools by category and compute per-category health
+    categories: dict[str, dict] = {}
+    for tool in TOOLS:
+        cat = tool["category"]
+        status = _tool_status(tool, available)
+        if cat not in categories:
+            categories[cat] = {"total": 0, "ok": 0, "tools_needing_attention": []}
+        categories[cat]["total"] += 1
+        if status == "ok":
+            categories[cat]["ok"] += 1
+        else:
+            categories[cat]["tools_needing_attention"].append(
+                (tool["name"], status, _status_icon(status))
+            )
+
+    # Build HTML
+    parts = [
+        '<article style="margin-top:1rem;padding:1rem;">',
+        '<h4 style="margin-bottom:0.5rem;">Tool Health by Category</h4>',
+        "<ul>",
+    ]
+    for cat, info in categories.items():
+        ok, total = info["ok"], info["total"]
+        icon = "✅" if ok == total else "⚠️"
+        parts.append(f"<li><strong>{cat}:</strong> {ok}/{total} {icon}")
+        if info["tools_needing_attention"]:
+            parts.append("<ul>")
+            for name, status, s_icon in info["tools_needing_attention"]:
+                parts.append(
+                    f'<li><small>{s_icon} <code>{name}</code> — {status}</small></li>'
+                )
+            parts.append("</ul>")
+        parts.append("</li>")
+    parts.append("</ul>")
+    parts.append('<a href="/tools" role="button" class="outline">Full tool details →</a>')
+    parts.append("</article>")
+    return HTMLResponse("\n".join(parts))
+
+
 @router.get("/overview", response_class=HTMLResponse)
 async def stats_overview(request: Request):
     """Stats cards for the dashboard home page."""
