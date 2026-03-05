@@ -264,15 +264,17 @@ def get_principles() -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def sanitize_sql_value(value: str) -> str:
-    """Sanitize a string value for use in SQL WHERE clauses.
+    """Sanitize a string value for use in LanceDB WHERE filters.
 
-    This is used for LanceDB `.where()` filters which don't support
-    parameterized queries. Strips single quotes and other dangerous characters.
+    LanceDB .where() uses SQL-like expressions but doesn't support
+    parameterized queries. We use an allowlist approach: only keep
+    alphanumeric characters, hyphens, underscores, spaces, and dots.
     """
     if not isinstance(value, str):
         return str(value)
-    # Remove single quotes, semicolons, and SQL comment markers
-    return value.replace("'", "").replace(";", "").replace("--", "").replace("/*", "").replace("*/", "")
+    import re
+    # Allowlist: keep only safe characters for filter values
+    return re.sub(r"[^a-zA-Z0-9\s\-_.,]", "", value)[:200]
 
 
 def parse_json_field(value) -> list:

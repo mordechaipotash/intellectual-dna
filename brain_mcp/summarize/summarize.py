@@ -428,7 +428,7 @@ def embed_summaries():
     db.create_table(table_name, lance_records)
     print(f"✅ LanceDB: {len(lance_records)} summary vectors → {lance_path}", flush=True)
 
-    del embeddings, all_embeddings, model
+    del all_embeddings, lance_records
     gc.collect()
 
 
