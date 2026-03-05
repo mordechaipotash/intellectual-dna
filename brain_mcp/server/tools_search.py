@@ -43,7 +43,7 @@ def register(mcp):
         embedding = get_embedding(query)
         if not embedding:
             try:
-                import sentence_transformers  # noqa: F401
+                import fastembed  # noqa: F401
                 return "Could not generate embedding for query."
             except ImportError:
                 return ("Semantic search requires the embedding model.\n"
@@ -181,17 +181,8 @@ def register(mcp):
         if not results:
             return f"No summaries found for: {query}"
 
-        # Optional cross-encoder reranking
-        try:
-            from sentence_transformers import CrossEncoder
-            reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-            pairs = [(query, r.get("summary", "")) for r in results]
-            scores = reranker.predict(pairs)
-            for i, r in enumerate(results):
-                r["rerank_score"] = float(scores[i])
-            results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
-        except Exception:
-            pass
+        # Note: Cross-encoder reranking removed in fastembed migration.
+        # Results are returned in vector similarity order.
 
         results = results[:limit]
 

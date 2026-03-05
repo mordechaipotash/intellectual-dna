@@ -37,28 +37,26 @@ _principles_data = None
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_embedding_model():
-    """Get cached embedding model (lazy-loaded on first call).
-    Returns None if sentence-transformers is not installed."""
+    """Get cached embedding provider (lazy-loaded on first call).
+    Returns None if fastembed is not installed."""
     global _embedding_model
     if _embedding_model is None:
         try:
-            cfg = get_config()
-            from sentence_transformers import SentenceTransformer
-            _embedding_model = SentenceTransformer(cfg.embedding.model, trust_remote_code=True)
+            from brain_mcp.embed.provider import get_provider
+            _embedding_model = get_provider()
         except ImportError:
             return None
     return _embedding_model
 
 
 def get_embedding(text: str) -> Optional[list[float]]:
-    """Get embedding vector for text. Returns None if model unavailable."""
+    """Get embedding vector for text. Returns None if provider unavailable."""
     try:
         cfg = get_config()
-        model = get_embedding_model()
-        if model is None:
+        provider = get_embedding_model()
+        if provider is None:
             return None
-        embedding = model.encode(text[:cfg.embedding.max_chars], convert_to_numpy=True)
-        return embedding.tolist()
+        return provider.embed_query(text[:cfg.embedding.max_chars])
     except Exception:
         return None
 

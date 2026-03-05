@@ -164,10 +164,10 @@ def cmd_init(args):
         try:
             cmd_embed(args)
         except Exception as e:
-            if "sentence_transformers" in str(e) or "No module named" in str(e):
-                console.print("\n[yellow]Embedding skipped — sentence-transformers not installed.[/yellow]")
+            if "fastembed" in str(e) or "No module named" in str(e):
+                console.print("\n[yellow]Embedding skipped — fastembed not installed.[/yellow]")
                 console.print("   Keyword search works now. For semantic search:")
-                console.print("   pipx inject brain-mcp sentence-transformers einops")
+                console.print("   pip install 'brain-mcp[embed]'")
                 console.print("   brain-mcp embed")
             else:
                 raise
@@ -214,6 +214,16 @@ def cmd_embed(args):
     config_path = getattr(args, 'config', None) or DEFAULT_CONFIG_PATH
     if config_path and Path(config_path).exists():
         set_config(load_config(str(config_path)))
+
+    rebuild = getattr(args, 'rebuild', False)
+    if rebuild:
+        cfg = get_config()
+        lance_dir = Path(cfg.paths.vectors)
+        if lance_dir.exists():
+            import shutil
+            console.print("[yellow]Rebuilding — removing existing vectors...[/yellow]")
+            shutil.rmtree(lance_dir)
+            console.print("[green]Cleared. Re-embedding from scratch.[/green]\n")
 
     console.print("\n[bold]Creating embeddings...[/bold]\n")
 
@@ -552,7 +562,8 @@ def main():
     sub.add_parser("ingest", help="Import conversations from configured sources")
 
     # embed
-    sub.add_parser("embed", help="Create/update vector embeddings")
+    embed_parser = sub.add_parser("embed", help="Create/update vector embeddings")
+    embed_parser.add_argument("--rebuild", action="store_true", help="Drop and recreate all vectors from scratch")
 
     # serve
     sub.add_parser("serve", help="Start the MCP server")

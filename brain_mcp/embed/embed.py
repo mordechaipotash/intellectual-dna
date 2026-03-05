@@ -4,7 +4,10 @@ brain-mcp — Embedding pipeline.
 
 Reads all_conversations.parquet and embeds user messages into LanceDB
 for semantic search. Supports incremental (only new messages), full
-re-embed, and stats modes.
+re-embed, rebuild, and stats modes.
+
+Uses fastembed via the EmbeddingProvider ABC for lightweight,
+PyTorch-free embedding.
 
 All paths and model settings come from brain.yaml via config.py.
 
@@ -29,20 +32,15 @@ import lancedb
 from brain_mcp.config import get_config
 from brain_mcp.ingest.noise_filter import is_noise_message
 
-# Embedding model (lazy loaded)
-_model = None
 
-
-def get_model():
-    """Load the embedding model (cached after first call)."""
-    global _model
-    if _model is None:
-        cfg = get_config()
-        print(f"Loading {cfg.embedding.model}...", flush=True)
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(cfg.embedding.model, trust_remote_code=True)
-        print("Model loaded!", flush=True)
-    return _model
+def get_provider():
+    """Get the embedding provider (cached after first call)."""
+    from brain_mcp.embed.provider import get_provider as _get_provider
+    cfg = get_config()
+    print(f"Loading {cfg.embedding.model}...", flush=True)
+    provider = _get_provider(cfg.embedding.model)
+    print(f"Model loaded! (dim={provider.dimension})", flush=True)
+    return provider
 
 
 def get_existing_ids(db) -> set:
@@ -59,7 +57,17 @@ def get_existing_ids(db) -> set:
         return set()
 
 
-def embed_messages(full: bool = False):
+def rebuild_table(db):
+    """Drop and recreate the LanceDB message table."""
+    try:
+        if "message" in db.table_names():
+            db.drop_table("message")
+            print("Dropped existing 'message' table.", flush=True)
+    except Exception as e:
+        print(f"Warning: Could not drop table: {e}", flush=True)
+
+
+def embed_messages(full: bool = False, rebuild: bool = False):
     """Embed user messages into LanceDB."""
     cfg = get_config()
 
@@ -79,7 +87,6 @@ def embed_messages(full: bool = False):
     free_gb = free_disk / (1024**3)
     if free_gb < 2:
         print(f"⚠️  Low disk space: {free_gb:.1f}GB free. Embedding needs ~1-2GB.", flush=True)
-        print("   Free up disk space or use: brain-mcp embed --provider openai", flush=True)
         sys.exit(1)
 
     # Load conversations — only columns we need
@@ -110,6 +117,11 @@ def embed_messages(full: bool = False):
     lance_path.parent.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(lance_path))
 
+    # Handle --rebuild: drop and recreate the table
+    if rebuild:
+        rebuild_table(db)
+        full = True  # Rebuild implies full re-embed
+
     # Filter noise messages
     print("Filtering noise messages...", flush=True)
     user_df["_is_noise"] = user_df["content"].apply(is_noise_message)
@@ -137,8 +149,8 @@ def embed_messages(full: bool = False):
         print("Nothing to embed!", flush=True)
         return
 
-    # Load model
-    model = get_model()
+    # Load provider
+    provider = get_provider()
 
     # Process in chunks
     total_embedded = 0
@@ -174,13 +186,13 @@ def embed_messages(full: bool = False):
 
         print(f"Embedding {len(texts)} messages...", flush=True)
 
-        # Batch embed
+        # Batch embed using provider
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             try:
-                embeddings = model.encode(batch, convert_to_numpy=True)
-                all_embeddings.extend(embeddings.tolist())
+                embeddings = provider.embed_batch(batch)
+                all_embeddings.extend(embeddings)
             except Exception as e:
                 print(f"  Error in batch {i}: {e}", flush=True)
                 continue
@@ -256,5 +268,7 @@ if __name__ == "__main__":
         stats()
     elif mode == "full":
         embed_messages(full=True)
+    elif mode == "rebuild":
+        embed_messages(rebuild=True)
     else:
         embed_messages(full=False)
