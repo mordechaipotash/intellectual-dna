@@ -216,19 +216,24 @@ def cmd_embed(args):
         set_config(load_config(str(config_path)))
 
     rebuild = getattr(args, 'rebuild', False)
-    if rebuild:
-        cfg = get_config()
-        lance_dir = Path(cfg.paths.vectors)
-        if lance_dir.exists():
-            import shutil
-            console.print("[yellow]Rebuilding — removing existing vectors...[/yellow]")
-            shutil.rmtree(lance_dir)
-            console.print("[green]Cleared. Re-embedding from scratch.[/green]\n")
+    force_provider = getattr(args, 'provider', None)
+
+    # Show which provider will be used
+    try:
+        from brain_mcp.embed.provider import _detect_available_provider
+        if force_provider:
+            console.print(f"[dim]Provider: {force_provider} (forced)[/dim]")
+        else:
+            detected = _detect_available_provider()
+            console.print(f"[dim]Provider: {detected} (auto-detected)[/dim]")
+    except ImportError as e:
+        console.print(f"[red]{e}[/red]")
+        return
 
     console.print("\n[bold]Creating embeddings...[/bold]\n")
 
     from brain_mcp.embed.embed import embed_messages
-    embed_messages()
+    embed_messages(rebuild=rebuild, force_provider=force_provider)
 
     console.print("\n[green]Embedding complete.[/green]\n")
 
@@ -564,6 +569,12 @@ def main():
     # embed
     embed_parser = sub.add_parser("embed", help="Create/update vector embeddings")
     embed_parser.add_argument("--rebuild", action="store_true", help="Drop and recreate all vectors from scratch")
+    embed_parser.add_argument(
+        "--provider",
+        choices=["fastembed", "sentence-transformers"],
+        default=None,
+        help="Force a specific embedding provider (default: auto-detect)",
+    )
 
     # serve
     sub.add_parser("serve", help="Start the MCP server")

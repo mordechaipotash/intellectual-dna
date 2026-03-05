@@ -33,13 +33,20 @@ from brain_mcp.config import get_config
 from brain_mcp.ingest.noise_filter import is_noise_message
 
 
-def get_provider():
-    """Get the embedding provider (cached after first call)."""
+def get_provider(force_provider=None):
+    """Get the embedding provider (cached after first call).
+
+    Args:
+        force_provider: Force 'fastembed' or 'sentence-transformers'.
+    """
     from brain_mcp.embed.provider import get_provider as _get_provider
     cfg = get_config()
-    print(f"Loading {cfg.embedding.model}...", flush=True)
-    provider = _get_provider(cfg.embedding.model)
-    print(f"Model loaded! (dim={provider.dimension})", flush=True)
+    print(f"Loading embedding model...", flush=True)
+    provider = _get_provider(
+        model_name=cfg.embedding.model,
+        force_provider=force_provider,
+    )
+    print(f"Model loaded! ({provider.provider_name})", flush=True)
     return provider
 
 
@@ -67,7 +74,30 @@ def rebuild_table(db):
         print(f"Warning: Could not drop table: {e}", flush=True)
 
 
-def embed_messages(full: bool = False, rebuild: bool = False):
+def _check_dimension_mismatch(db, provider):
+    """Check if existing vectors have a different dimension than current provider.
+
+    Returns (mismatch: bool, existing_dim: int or None).
+    """
+    try:
+        if "message" not in db.table_names():
+            return False, None
+        tbl = db.open_table("message")
+        if tbl.count_rows() == 0:
+            return False, None
+        # Sample one row to get embedding dimension
+        sample = tbl.to_pandas().head(1)
+        if "embedding" in sample.columns:
+            existing_emb = sample["embedding"].iloc[0]
+            existing_dim = len(existing_emb) if existing_emb is not None else None
+            if existing_dim and existing_dim != provider.dimension:
+                return True, existing_dim
+    except Exception:
+        pass
+    return False, None
+
+
+def embed_messages(full: bool = False, rebuild: bool = False, force_provider: str = None):
     """Embed user messages into LanceDB."""
     cfg = get_config()
 
@@ -117,6 +147,36 @@ def embed_messages(full: bool = False, rebuild: bool = False):
     lance_path.parent.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(lance_path))
 
+    # Load provider early to check dimensions
+    provider = get_provider(force_provider=force_provider)
+
+    # Check for dimension mismatch BEFORE proceeding
+    if not rebuild:
+        mismatch, existing_dim = _check_dimension_mismatch(db, provider)
+        if mismatch:
+            print(
+                f"\n⚠️  DIMENSION MISMATCH: existing vectors are {existing_dim}d, "
+                f"but current provider produces {provider.dimension}d vectors.",
+                flush=True,
+            )
+            print(
+                "   Existing vectors will NOT be deleted automatically.",
+                flush=True,
+            )
+            print(
+                "   To rebuild with the new provider, run:",
+                flush=True,
+            )
+            print(
+                "     brain-mcp embed --rebuild",
+                flush=True,
+            )
+            print(
+                "\n   Skipping embedding to protect existing vectors.\n",
+                flush=True,
+            )
+            return
+
     # Handle --rebuild: drop and recreate the table
     if rebuild:
         rebuild_table(db)
@@ -148,9 +208,6 @@ def embed_messages(full: bool = False, rebuild: bool = False):
     if len(user_df) == 0:
         print("Nothing to embed!", flush=True)
         return
-
-    # Load provider
-    provider = get_provider()
 
     # Process in chunks
     total_embedded = 0

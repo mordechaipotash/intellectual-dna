@@ -296,7 +296,7 @@ def prewarm():
     """Pre-load embedding model and LanceDB connection for fast first query."""
     print("Pre-warming brain-mcp...", file=sys.stderr)
 
-    model = get_embedding_model()
+    provider = get_embedding_model()
     db = get_lance_db()
     if db:
         try:
@@ -304,9 +304,12 @@ def prewarm():
         except Exception:
             pass
 
-    # Dummy embed to fully initialize
-    if model:
-        model.encode("warmup", convert_to_numpy=True)
+    # Dummy embed to fully initialize the provider
+    if provider:
+        try:
+            provider.embed_query("warmup")
+        except Exception:
+            pass
 
     print("brain-mcp ready!", file=sys.stderr)
 

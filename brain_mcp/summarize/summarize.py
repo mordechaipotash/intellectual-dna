@@ -354,8 +354,9 @@ def embed_summaries():
     df = pd.read_parquet(cfg.summaries_parquet)
     print(f"Embedding {len(df)} summaries...", flush=True)
 
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(cfg.embedding.model, trust_remote_code=True)
+    from brain_mcp.embed.provider import get_provider
+    provider = get_provider()
+    print(f"  Using {provider.provider_name}", flush=True)
 
     texts = df["embedding_text"].tolist()
     valid_mask = [bool(t and len(str(t).strip()) > 10) for t in texts]
@@ -364,25 +365,24 @@ def embed_summaries():
 
     print(f"  {len(valid_texts)} / {len(texts)} have enough text", flush=True)
 
-    # Batch embed
+    # Batch embed using provider abstraction
     batch_size = cfg.embedding.batch_size
     all_embeddings = []
     for i in range(0, len(valid_texts), batch_size):
         batch = valid_texts[i:i + batch_size]
-        prefixed = [f"search_document: {t}" for t in batch]
-        emb = model.encode(prefixed, show_progress_bar=False)
-        all_embeddings.append(emb)
+        batch_embs = provider.embed_batch(batch)
+        all_embeddings.extend(batch_embs)
         done = min(i + batch_size, len(valid_texts))
         if done % 500 == 0 or done == len(valid_texts):
             print(f"  {done}/{len(valid_texts)} embedded", flush=True)
         if done % 200 == 0:
             gc.collect()
 
-    embeddings = np.vstack(all_embeddings)
-
     # Build lance records
     lance_records = []
     for idx, emb_idx in enumerate(valid_indices):
+        if idx >= len(all_embeddings):
+            break
         row = df.iloc[emb_idx]
         lance_records.append({
             "conversation_id": row["conversation_id"],
@@ -397,7 +397,7 @@ def embed_summaries():
             "decisions": row["decisions"],
             "quotable": row.get("quotable", "[]"),
             "embedding_text": row["embedding_text"],
-            "vector": embeddings[idx].tolist(),
+            "vector": all_embeddings[idx],
         })
 
     # Write to LanceDB
