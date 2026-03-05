@@ -380,9 +380,9 @@ def cmd_doctor(args):
     vectors_path = Path(cfg.vectors_dir) / "brain.lance"
     if vectors_path.exists():
         import lancedb
-        db = lancedb.connect(str(Path(cfg.vectors_dir)))
+        db = lancedb.connect(str(cfg.lance_path))
         try:
-            tbl = db.open_table("messages")
+            tbl = db.open_table("message")
             vec_count = len(tbl)
             console.print(f"   [green]ok[/green] Vectors: {vec_count:,} embeddings")
         except Exception:
@@ -446,12 +446,12 @@ def cmd_status(args):
         con.close()
 
     vec_count = 0
-    vectors_path = Path(cfg.vectors_dir)
-    if vectors_path.exists():
+    lance_path = cfg.lance_path
+    if lance_path.exists():
         try:
             import lancedb
-            db = lancedb.connect(str(vectors_path))
-            tbl = db.open_table("messages")
+            db = lancedb.connect(str(lance_path))
+            tbl = db.open_table("message")
             vec_count = len(tbl)
         except Exception:
             pass
