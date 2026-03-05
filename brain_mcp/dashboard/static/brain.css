@@ -512,6 +512,132 @@ progress {
 .text-muted { color: var(--text-secondary); }
 
 /* ═══════════════════════════════════════════════════════════════
+   EMPTY STATE
+   ═══════════════════════════════════════════════════════════════ */
+
+.empty-state, .empty-state-no-results {
+  text-align: center;
+  padding: 3rem 1rem;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.suggested-queries {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.suggested-query {
+  font-size: 0.85rem !important;
+  padding: 0.3rem 0.75rem !important;
+  border-radius: 20px !important;
+  cursor: pointer;
+}
+
+.suggested-query:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent-bright) !important;
+  box-shadow: var(--glow-accent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SEARCH META & SPEED
+   ═══════════════════════════════════════════════════════════════ */
+
+.search-meta {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.search-speed {
+  margin-left: 0.5rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border-subtle);
+}
+
+/* Match badge (enhanced from match-label) */
+.match-badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.match-badge.match-best {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.match-badge.match-good {
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.match-badge.match-related {
+  background: rgba(136, 136, 168, 0.1);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RECENT ACTIVITY LIST
+   ═══════════════════════════════════════════════════════════════ */
+
+.recent-activity-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.recent-item:hover {
+  background: var(--bg-elevated);
+}
+
+.recent-item a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.recent-item a:hover {
+  color: var(--accent-bright);
+}
+
+.recent-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HEATMAP
+   ═══════════════════════════════════════════════════════════════ */
+
+#heatmap-canvas {
+  display: block;
+  margin: 0.5rem auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    RESPONSIVE
    ═══════════════════════════════════════════════════════════════ */
 

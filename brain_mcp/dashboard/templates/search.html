@@ -141,5 +141,12 @@ document.getElementById('search-input').addEventListener('keydown', function(e) 
         doSearch();
     }
 });
+
+// Suggested query click handler
+function suggestedSearch(btn) {
+    var q = btn.textContent.trim();
+    document.getElementById('search-input').value = q;
+    doSearch();
+}
 </script>
 {% endblock %}

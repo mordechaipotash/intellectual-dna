@@ -1,7 +1,7 @@
 """Dashboard stats API endpoints."""
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 router = APIRouter(tags=["stats"])
 
@@ -239,3 +239,161 @@ async def stats_disk():
         return f"💾 {total / 1024 / 1024:.1f} MB total ({', '.join(parts)})"
     except Exception:
         return "Disk usage unknown"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# HEATMAP — daily message counts for 365-day calendar grid
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/heatmap")
+async def stats_heatmap(days: int = Query(365, ge=1, le=730)):
+    """Return daily message counts for heatmap visualization.
+
+    Returns JSON: [{"date": "2025-01-15", "count": 42}, ...]
+    """
+    try:
+        from brain_mcp.server.db import get_conversations
+        con = get_conversations()
+        rows = con.execute(f"""
+            SELECT CAST(created AS DATE) AS day, COUNT(*) AS cnt
+            FROM conversations
+            WHERE created >= CURRENT_DATE - INTERVAL '{days}' DAY
+            GROUP BY day
+            ORDER BY day
+        """).fetchall()
+        return [{"date": str(row[0]), "count": row[1]} for row in rows]
+    except Exception:
+        return []
+
+
+@router.get("/heatmap.html", response_class=HTMLResponse)
+async def stats_heatmap_html(request: Request, days: int = Query(365, ge=1, le=730)):
+    """Return heatmap as an HTML partial (canvas-rendered via JS)."""
+    try:
+        from brain_mcp.server.db import get_conversations
+        con = get_conversations()
+        rows = con.execute(f"""
+            SELECT CAST(created AS DATE) AS day, COUNT(*) AS cnt
+            FROM conversations
+            WHERE created >= CURRENT_DATE - INTERVAL '{days}' DAY
+            GROUP BY day
+            ORDER BY day
+        """).fetchall()
+
+        import json
+        data_json = json.dumps([{"date": str(r[0]), "count": r[1]} for r in rows])
+        total_days_with_data = len(rows)
+        total_msgs = sum(r[1] for r in rows) if rows else 0
+
+        return f"""
+        <canvas id="heatmap-canvas" width="722" height="112"
+                style="width:100%;max-width:722px;height:auto;border-radius:8px;"></canvas>
+        <small class="text-muted">{total_days_with_data} active days · {total_msgs:,} messages in {days} days</small>
+        <script>
+        (function() {{
+            var data = {data_json};
+            renderHeatmap('heatmap-canvas', data, {days});
+        }})();
+        </script>
+        """
+    except Exception:
+        return "<p><small>Heatmap data unavailable.</small></p>"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RECENT — most recent conversations
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/recent")
+async def stats_recent(limit: int = Query(5, ge=1, le=20)):
+    """Return most recent conversations with title, date, message count."""
+    try:
+        from brain_mcp.server.db import get_conversations
+        con = get_conversations()
+        rows = con.execute(f"""
+            SELECT conversation_id,
+                   MAX(conversation_title) AS title,
+                   MAX(created) AS last_date,
+                   COUNT(*) AS message_count
+            FROM conversations
+            GROUP BY conversation_id
+            ORDER BY last_date DESC
+            LIMIT {limit}
+        """).fetchall()
+        return [
+            {
+                "conversation_id": row[0],
+                "title": row[1] or "Untitled",
+                "date": str(row[2])[:10] if row[2] else "unknown",
+                "message_count": row[3],
+            }
+            for row in rows
+        ]
+    except Exception:
+        return []
+
+
+@router.get("/recent.html", response_class=HTMLResponse)
+async def stats_recent_html(request: Request, limit: int = Query(5, ge=1, le=20)):
+    """Return recent conversations as an HTML partial."""
+    try:
+        from brain_mcp.server.db import get_conversations
+        con = get_conversations()
+        rows = con.execute(f"""
+            SELECT conversation_id,
+                   MAX(conversation_title) AS title,
+                   MAX(created) AS last_date,
+                   COUNT(*) AS message_count
+            FROM conversations
+            GROUP BY conversation_id
+            ORDER BY last_date DESC
+            LIMIT {limit}
+        """).fetchall()
+
+        if not rows:
+            return "<p><small>No recent conversations.</small></p>"
+
+        parts = ['<ul class="recent-activity-list">']
+        for row in rows:
+            conv_id, title, last_date, msg_count = row
+            title = title or "Untitled"
+            date_str = str(last_date)[:10] if last_date else "unknown"
+            parts.append(
+                f'<li class="recent-item">'
+                f'<a href="/conversation/{conv_id}">'
+                f'<strong>{title}</strong></a>'
+                f'<span class="recent-meta">{date_str} · {msg_count} msgs</span>'
+                f'</li>'
+            )
+        parts.append("</ul>")
+        return "\n".join(parts)
+    except Exception:
+        return "<p><small>No recent activity data.</small></p>"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SPARK — daily counts for sparkline
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/spark")
+async def stats_spark(
+    metric: str = Query("messages", description="Metric to chart"),
+    days: int = Query(7, ge=1, le=90),
+):
+    """Return daily counts for sparkline display.
+
+    Returns JSON: [{"date": "2025-07-10", "count": 15}, ...]
+    """
+    try:
+        from brain_mcp.server.db import get_conversations
+        con = get_conversations()
+        rows = con.execute(f"""
+            SELECT CAST(created AS DATE) AS day, COUNT(*) AS cnt
+            FROM conversations
+            WHERE created >= CURRENT_DATE - INTERVAL '{days}' DAY
+            GROUP BY day
+            ORDER BY day
+        """).fetchall()
+        return [{"date": str(row[0]), "count": row[1]} for row in rows]
+    except Exception:
+        return []

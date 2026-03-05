@@ -80,7 +80,10 @@ def _match_label(score: float) -> str:
 
 
 def _match_class(score: float) -> str:
-    """Return CSS class for match label styling."""
+    """Return CSS class for match label styling.
+
+    >0.90 = green (best), 0.70-0.90 = blue (good), 0.50-0.70 = gray (related).
+    """
     if score > 0.90:
         return "match-best"
     elif score >= 0.70:
@@ -181,7 +184,10 @@ def _search_semantic(
 
     embedding = get_embedding(query)
     if embedding is None:
-        raise ValueError("Embedding model not available. Install sentence-transformers.")
+        raise ValueError(
+            "Embedding model not available. "
+            "Install with: pip install 'brain-mcp[embed]'"
+        )
 
     db = get_lance_db()
     if not db:

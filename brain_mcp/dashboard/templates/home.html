@@ -19,17 +19,44 @@
            aria-label="Quick search">
 </div>
 
-<!-- Activity sparkline -->
+<!-- Heatmap: 365-day activity calendar -->
 <article>
-    <header>📊 Activity (last 30 days)</header>
-    <div id="activity-chart"
-         hx-get="/api/stats/activity?days=30"
+    <header>🗓️ Activity Heatmap (last 365 days)</header>
+    <div id="heatmap-section"
+         hx-get="/api/stats/heatmap.html?days=365"
          hx-trigger="load"
-         hx-target="#activity-chart"
+         hx-target="#heatmap-section"
          hx-swap="innerHTML">
         <progress></progress>
     </div>
 </article>
+
+<!-- Two-column layout: Recent Activity + Activity Sparkline -->
+<div class="grid">
+    <!-- Recent Activity feed -->
+    <article>
+        <header>⚡ Recent Activity</header>
+        <div id="recent-activity"
+             hx-get="/api/stats/recent.html?limit=5"
+             hx-trigger="load"
+             hx-target="#recent-activity"
+             hx-swap="innerHTML">
+            <progress></progress>
+        </div>
+    </article>
+
+    <!-- Activity sparkline -->
+    <article>
+        <header>📊 Activity (last 30 days)</header>
+        <div id="activity-chart"
+             hx-get="/api/stats/activity?days=30"
+             hx-trigger="load"
+             hx-target="#activity-chart"
+             hx-swap="innerHTML">
+            <progress></progress>
+        </div>
+    </article>
+</div>
 
 <!-- Two-column layout: Sources + Top Topics -->
 <div class="grid">

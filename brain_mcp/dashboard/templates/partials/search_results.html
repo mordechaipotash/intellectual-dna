@@ -1,30 +1,47 @@
 {% if empty %}
-<!-- Empty state: no query yet -->
+<!-- Empty state: no query yet — show suggested queries -->
+<div class="empty-state">
+    <div class="empty-icon">🧠</div>
+    <h3>Search your brain</h3>
+    <p class="text-muted">Find conversations, ideas, and insights across all your data.</p>
+    <div class="suggested-queries">
+        <p><small><strong>Try searching for:</strong></small></p>
+        <button class="outline suggested-query" onclick="suggestedSearch(this)">architecture decisions</button>
+        <button class="outline suggested-query" onclick="suggestedSearch(this)">what was I thinking about</button>
+        <button class="outline suggested-query" onclick="suggestedSearch(this)">open questions</button>
+        <button class="outline suggested-query" onclick="suggestedSearch(this)">project ideas</button>
+        <button class="outline suggested-query" onclick="suggestedSearch(this)">debugging sessions</button>
+    </div>
+</div>
 {% elif error is defined and error %}
 <article>
     <header>⚠️ Search Error</header>
     <p>{{ error }}</p>
 </article>
 {% elif results|length == 0 %}
-<article>
-    <p>No results found for "<strong>{{ query }}</strong>" ({{ mode }} search, {{ duration_ms }}ms)</p>
+<article class="empty-state-no-results">
+    <div class="empty-icon">🔍</div>
+    <p>No results found for "<strong>{{ query }}</strong>"</p>
+    <p><small class="text-muted">{{ mode }} search · {{ duration_ms }}ms</small></p>
+    <p><small>Try a different search mode or broader terms.</small></p>
 </article>
 {% else %}
-<p>
+<div class="search-meta">
     <small>
         {{ total_results }} result{{ 's' if total_results != 1 else '' }} for
         "<strong>{{ query }}</strong>"
-        ({{ mode }}, {{ duration_ms }}ms)
+        <span class="search-speed">{{ mode }} · <span class="text-accent">{{ duration_ms }}ms</span></span>
     </small>
-</p>
+</div>
 
 {% for result in results %}
 <article class="search-result">
     <header>
         <div class="result-header">
             {% if result.similarity is not none %}
-            <span class="match-label {{ result.match_class }}">
-                {{ result.match_label }}
+            <span class="match-badge {{ result.match_class }}">
+                {{ result.similarity_dot }} {{ result.match_label }}
+                <small>({{ "%.0f"|format(result.similarity * 100) }}%)</small>
             </span>
             {% endif %}
             <span class="result-date">{{ result.date }}</span>
