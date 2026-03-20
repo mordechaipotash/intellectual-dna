@@ -4,6 +4,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "brain-mcp"
@@ -14,6 +15,11 @@ DEFAULT_CONFIG_PATH = (
     DEFAULT_CONFIG_PATH_TOML if DEFAULT_CONFIG_PATH_TOML.exists()
     else DEFAULT_CONFIG_PATH_YAML
 )
+
+
+def _has_config() -> bool:
+    """Check if brain-mcp has been configured."""
+    return DEFAULT_CONFIG_PATH_TOML.exists() or DEFAULT_CONFIG_PATH_YAML.exists()
 
 
 def discover_sources():
@@ -165,6 +171,76 @@ def create_config(sources, config_dir=None):
     return config_path
 
 
+def _auto_detect_mcp_clients():
+    """Auto-detect installed MCP clients. Returns list of (label, config_path) tuples."""
+    import platform
+    is_mac = platform.system() == "Darwin"
+    clients = []
+
+    # Claude Desktop
+    if is_mac:
+        desktop_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    else:
+        desktop_path = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    if desktop_path.parent.exists():
+        clients.append(("Claude Desktop", desktop_path))
+
+    # Claude Code
+    code_path = Path.home() / ".claude.json"
+    if code_path.exists() or (Path.home() / ".claude").exists():
+        clients.append(("Claude Code", code_path))
+
+    # Cursor
+    cursor_path = Path.home() / ".cursor" / "mcp.json"
+    if cursor_path.parent.exists():
+        clients.append(("Cursor", cursor_path))
+
+    # Windsurf
+    windsurf_path = Path.home() / ".windsurf" / "mcp.json"
+    if windsurf_path.parent.exists():
+        clients.append(("Windsurf", windsurf_path))
+
+    return clients
+
+
+def _run_test_query(console):
+    """Run a test query to verify the brain works. Returns (success, msg_count)."""
+    try:
+        from brain_mcp.config import get_config
+        cfg = get_config()
+        if not cfg.parquet_path.exists():
+            return False, 0
+
+        import duckdb
+        con = duckdb.connect()
+        con.execute(f"""
+            CREATE VIEW conversations
+            AS SELECT * FROM read_parquet('{cfg.parquet_path}')
+        """)
+
+        # Get 3 recent user messages as proof
+        results = con.execute("""
+            SELECT substr(content, 1, 120) as preview,
+                   conversation_title, source
+            FROM conversations
+            WHERE role = 'user' AND length(content) > 20
+            ORDER BY created DESC
+            LIMIT 3
+        """).fetchall()
+
+        if results:
+            console.print("\n[bold]📋 Sample from your brain:[/bold]\n")
+            for preview, title, source in results:
+                preview_clean = preview.replace('\n', ' ').strip()
+                console.print(f'   [dim]{source}[/dim] "{preview_clean}..."')
+
+        con.close()
+        return True, len(results)
+    except Exception as e:
+        console.print(f"   [yellow]Test query failed: {e}[/yellow]")
+        return False, 0
+
+
 def cmd_init(args):
     """Discover sources and create config."""
     from rich.console import Console
@@ -233,6 +309,7 @@ def cmd_ingest(args):
     total = run_all_ingesters(cfg)
 
     console.print(f"\n[green]Total: {total:,} messages imported[/green]\n")
+    return total
 
 
 def cmd_embed(args):
@@ -268,6 +345,49 @@ def cmd_embed(args):
     console.print("\n[green]Embedding complete.[/green]\n")
 
 
+def _incremental_sync(cfg, stderr_print):
+    """Check for new files and do incremental ingest if needed. Returns count of new sessions or 0."""
+    import os
+
+    parquet_path = cfg.parquet_path
+    if not parquet_path.exists():
+        return 0
+
+    parquet_mtime = parquet_path.stat().st_mtime
+
+    # Check each source for files newer than parquet
+    new_count = 0
+    for source in (cfg.sources or []):
+        source_path = Path(source.path if hasattr(source, 'path') else source.get("path", ""))
+        if not source_path.exists():
+            continue
+        for f in source_path.rglob("*.jsonl"):
+            try:
+                if f.stat().st_mtime > parquet_mtime:
+                    new_count += 1
+            except OSError:
+                continue
+
+    if new_count == 0:
+        return 0
+
+    stderr_print(f"🔄 Found {new_count} new session{'s' if new_count != 1 else ''}, syncing...")
+
+    try:
+        import concurrent.futures
+        from brain_mcp.ingest import run_all_ingesters
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_all_ingesters, cfg)
+            future.result(timeout=30)  # Cap sync at 30 seconds on startup
+        stderr_print(f"✅ Sync complete.")
+    except concurrent.futures.TimeoutError:
+        stderr_print(f"⚠️  Sync taking too long, continuing with existing data. Run 'brain-mcp sync' later.")
+    except Exception as e:
+        stderr_print(f"⚠️  Incremental sync failed: {e}")
+
+    return new_count
+
+
 def cmd_serve(args):
     """Start the MCP server."""
     import sys as _sys
@@ -276,8 +396,15 @@ def cmd_serve(args):
     if config_path and Path(config_path).exists():
         set_config(load_config(str(config_path)))
 
-    # Show startup message on stderr (stdout is for MCP stdio transport)
     cfg = get_config()
+
+    def stderr_print(msg):
+        print(msg, file=_sys.stderr, flush=True)
+
+    # Auto-sync: check for new files before starting
+    _incremental_sync(cfg, stderr_print)
+
+    # Show startup message on stderr (stdout is for MCP stdio transport)
     msg_count = 0
     if cfg.parquet_path.exists():
         try:
@@ -287,7 +414,7 @@ def cmd_serve(args):
             con.close()
         except Exception:
             pass
-    print(f"brain-mcp MCP server running on stdio. Messages: {msg_count:,}.", file=_sys.stderr, flush=True)
+    stderr_print(f"brain-mcp MCP server running on stdio. Messages: {msg_count:,}.")
 
     from brain_mcp.server.server import create_server
     mcp = create_server()
@@ -313,7 +440,7 @@ def _write_mcp_config(config_file, console, label=None):
     server_key = "my-brain"
 
     if server_key in config["mcpServers"]:
-        console.print(f"[yellow]my-brain already configured in {config_file}[/yellow]")
+        console.print(f"   [green]✓[/green] {label or config_file} [dim](already configured)[/dim]")
         return
 
     # Use full path to brain-mcp so the client can find it
@@ -328,11 +455,147 @@ def _write_mcp_config(config_file, console, label=None):
         json.dump(config, f, indent=2)
 
     display = label or config_file
-    console.print(f"[green]✓ Brain MCP added to {display}[/green]  ({config_file})")
+    console.print(f"   [green]✓[/green] {display}  [dim]({config_file})[/dim]")
 
 
 def cmd_setup(args):
-    """Auto-configure an MCP client."""
+    """Setup wizard or configure a specific MCP client."""
+    client = getattr(args, 'client', None)
+
+    if client:
+        # Specific client setup — original behavior
+        _setup_single_client(args)
+    else:
+        # Unified setup wizard
+        _setup_wizard(args)
+
+
+def _setup_wizard(args):
+    """Unified one-command setup wizard."""
+    import os
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    console = Console()
+
+    console.print("\n[bold]🧠 Setting up brain-mcp...[/bold]\n")
+
+    # ── Step 1: Discover sources ──
+    sources = discover_sources()
+
+    if not sources:
+        console.print("[yellow]No conversation sources found.[/yellow]\n")
+        console.print("💡 Start using Claude Code or Claude Desktop, then re-run [cyan]brain-mcp setup[/cyan]")
+        console.print("💡 Or export from ChatGPT: [cyan]brain-mcp import chatgpt[/cyan]\n")
+        return
+
+    # ── Step 2: Create config ──
+    config_path = create_config(sources)
+    console.print(f"[dim]Config saved to {config_path}[/dim]\n")
+
+    # Load config for subsequent steps
+    from brain_mcp.config import load_config, set_config, get_config
+    set_config(load_config(str(config_path)))
+    cfg = get_config()
+
+    # ── Step 3: Ingest ──
+    console.print("[bold]📥 Importing conversations...[/bold]\n")
+    from brain_mcp.ingest import run_all_ingesters
+    total_messages = run_all_ingesters(cfg)
+    console.print(f"\n[green]   {total_messages:,} messages imported[/green]\n")
+
+    # ── Step 4: Embed ──
+    total_embeddings = 0
+    if total_messages > 0:
+        # Check if fastembed is available; if not, auto-install it
+        fastembed_available = False
+        try:
+            import fastembed  # noqa: F401
+            fastembed_available = True
+        except ImportError:
+            console.print("[bold]🔮 Installing embedding model...[/bold]\n")
+            console.print("   [dim]This is a one-time download (~107MB). Future runs skip this.[/dim]\n")
+            try:
+                import subprocess
+                # Detect if running in pipx or regular pip
+                in_pipx = "pipx" in (os.environ.get("VIRTUAL_ENV", "") + sys.prefix)
+                if in_pipx:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "fastembed>=0.5"],
+                        capture_output=True, text=True, timeout=300
+                    )
+                else:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "fastembed>=0.5"],
+                        capture_output=True, text=True, timeout=300
+                    )
+                if result.returncode == 0:
+                    console.print("   [green]✓ Embedding model installed[/green]\n")
+                    fastembed_available = True
+                else:
+                    console.print(f"   [yellow]⚠️  Could not install embedding model[/yellow]")
+                    console.print(f"   [dim]Install manually: pipx inject brain-mcp fastembed[/dim]\n")
+            except Exception as e:
+                console.print(f"   [yellow]⚠️  Could not install embedding model: {e}[/yellow]")
+                console.print(f"   [dim]Install manually: pipx inject brain-mcp fastembed[/dim]\n")
+
+        if fastembed_available:
+            console.print("[bold]🔮 Creating embeddings...[/bold]\n")
+            try:
+                from brain_mcp.embed.embed import embed_messages
+                embed_messages()
+                # Count embeddings
+                try:
+                    import lancedb
+                    db = lancedb.connect(str(cfg.lance_path))
+                    tables = db.table_names() if hasattr(db, "table_names") else list(db.list_tables())
+                    for t_name in ("message", "brain"):
+                        if t_name in tables:
+                            total_embeddings = db.open_table(t_name).count_rows()
+                            break
+                except Exception:
+                    pass
+                console.print(f"\n[green]   {total_embeddings:,} embeddings created[/green]\n")
+            except Exception as e:
+                console.print(f"\n[yellow]   Embedding skipped: {e}[/yellow]")
+                console.print("   Keyword search works now. Run [cyan]brain-mcp embed[/cyan] later for semantic search.\n")
+        else:
+            console.print("[dim]   Skipping embeddings — keyword search works without them.[/dim]")
+            console.print("   [dim]For semantic search later: pipx inject brain-mcp fastembed && brain-mcp embed[/dim]\n")
+
+    # ── Step 5: Auto-detect and configure MCP clients ──
+    console.print("[bold]🔌 Configuring MCP clients...[/bold]\n")
+    clients = _auto_detect_mcp_clients()
+    configured_names = []
+
+    if clients:
+        for label, client_path in clients:
+            try:
+                _write_mcp_config(client_path, console, label)
+                configured_names.append(label)
+            except Exception as e:
+                console.print(f"   [yellow]⚠️  {label}: {e}[/yellow]")
+    else:
+        console.print("   [dim]No MCP clients detected[/dim]")
+
+    console.print()
+
+    # ── Step 6: Test query ──
+    if total_messages > 0:
+        _run_test_query(console)
+
+    # ── Step 7: Summary ──
+    console.print()
+    configured_str = ", ".join(configured_names) if configured_names else "none"
+    console.print(f"[bold green]✅ Your brain is ready![/bold green] "
+                  f"{total_messages:,} messages indexed, {total_embeddings:,} embeddings created. "
+                  f"Configured: {configured_str}.")
+    console.print()
+    console.print("   Open Claude and ask: [italic]'what was I working on last week?'[/italic]")
+    console.print()
+
+
+def _setup_single_client(args):
+    """Auto-configure a specific MCP client."""
     from rich.console import Console
     console = Console()
 
@@ -348,9 +611,6 @@ def cmd_setup(args):
         else:
             config_file = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
     elif client in ("claude-code", "code"):
-        # Claude Code stores MCP servers in ~/.claude.json (user scope)
-        # NOT in ~/.claude/mcp.json (that's not a Claude Code file)
-        # See: https://code.claude.com/docs/en/mcp#user-scope
         config_file = Path.home() / ".claude.json"
     elif client == "claude":
         # Auto-detect: set up BOTH if they exist, else whichever is found
@@ -426,14 +686,40 @@ def cmd_doctor(args):
         import lancedb
         db = lancedb.connect(str(cfg.lance_path))
         try:
-            tbl = db.open_table("message")
-            vec_count = len(tbl)
+            tables = db.table_names() if hasattr(db, "table_names") else list(db.list_tables())
+            vec_count = 0
+            for t_name in ("message", "brain"):
+                if t_name in tables:
+                    vec_count = len(db.open_table(t_name))
+                    break
             console.print(f"   [green]ok[/green] Vectors: {vec_count:,} embeddings")
         except Exception:
             console.print(f"   [yellow]warn[/yellow]  Vectors: directory exists but no table")
     else:
         console.print(f"   [yellow]warn[/yellow]  Vectors: not found")
         console.print(f"      -> Run: brain-mcp embed")
+
+    # Embedding provider check — with timeout
+    import concurrent.futures
+    def _check_embedding():
+        try:
+            from brain_mcp.embed.provider import _detect_available_provider
+            return _detect_available_provider()
+        except ImportError:
+            return None
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_check_embedding)
+            provider = future.result(timeout=5)
+            if provider:
+                console.print(f"   [green]ok[/green] Embedding: {provider}")
+            else:
+                console.print(f"   [yellow]warn[/yellow]  Embedding: no backend found")
+    except concurrent.futures.TimeoutError:
+        console.print(f"   [yellow]⚠️[/yellow]  Embedding check timed out")
+    except Exception as e:
+        console.print(f"   [yellow]warn[/yellow]  Embedding: {e}")
 
     # Summaries
     summaries_path = Path(cfg.data_dir) / "brain_summaries_v6.parquet"
@@ -451,6 +737,7 @@ def cmd_doctor(args):
         ("Claude Desktop", desktop_path),
         ("Claude Code", Path.home() / ".claude.json"),
         ("Cursor", Path.home() / ".cursor" / "mcp.json"),
+        ("Windsurf", Path.home() / ".windsurf" / "mcp.json"),
     ]:
         if path.exists():
             with open(path) as f:
@@ -495,13 +782,82 @@ def cmd_status(args):
         try:
             import lancedb
             db = lancedb.connect(str(lance_path))
-            tbl = db.open_table("message")
-            vec_count = len(tbl)
+            tables = db.table_names() if hasattr(db, "table_names") else list(db.list_tables())
+            for t_name in ("message", "brain"):
+                if t_name in tables:
+                    vec_count = len(db.open_table(t_name))
+                    break
         except Exception:
             pass
 
     sources = len(cfg.sources) if cfg.sources else 0
     print(f"Brain: {msg_count:,} messages | {vec_count:,} vectors | {sources} sources")
+
+
+def _smart_status():
+    """Show smart status dashboard when brain is already configured."""
+    from rich.console import Console
+    console = Console()
+
+    try:
+        from importlib.metadata import version as _get_version
+        ver = _get_version("brain-mcp")
+    except Exception:
+        try:
+            from brain_mcp import __version__ as ver
+        except Exception:
+            ver = "unknown"
+
+    from brain_mcp.config import load_config, set_config, get_config
+    set_config(load_config(str(DEFAULT_CONFIG_PATH)))
+    cfg = get_config()
+
+    msg_count = 0
+    parquet_path = cfg.parquet_path
+    last_sync = None
+    if parquet_path.exists():
+        try:
+            import duckdb
+            con = duckdb.connect()
+            msg_count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')").fetchone()[0]
+            con.close()
+            # Last sync = parquet modification time
+            mtime = parquet_path.stat().st_mtime
+            import datetime
+            delta = datetime.datetime.now() - datetime.datetime.fromtimestamp(mtime)
+            if delta.total_seconds() < 3600:
+                last_sync = f"{int(delta.total_seconds() / 60)} minutes ago"
+            elif delta.total_seconds() < 86400:
+                last_sync = f"{int(delta.total_seconds() / 3600)} hours ago"
+            else:
+                last_sync = f"{int(delta.total_seconds() / 86400)} days ago"
+        except Exception:
+            pass
+
+    vec_count = 0
+    if cfg.lance_path.exists():
+        try:
+            import lancedb
+            db = lancedb.connect(str(cfg.lance_path))
+            tables = db.table_names() if hasattr(db, "table_names") else list(db.list_tables())
+            for t_name in ("message", "brain"):
+                if t_name in tables:
+                    tbl = db.open_table(t_name)
+                    vec_count = tbl.count_rows()
+                    break
+        except Exception:
+            pass
+
+    sources = len(cfg.sources) if cfg.sources else 0
+
+    console.print(f"\n[bold]🧠 brain-mcp v{ver}[/bold]")
+    stats_line = f"   Messages: {msg_count:,} | Embeddings: {vec_count:,} | Sources: {sources}"
+    console.print(stats_line)
+    if last_sync:
+        console.print(f"   Last sync: {last_sync}")
+    console.print()
+    console.print("   [dim]Commands: setup, sync, doctor, serve[/dim]")
+    console.print()
 
 
 def cmd_version(args):
@@ -534,7 +890,7 @@ def cmd_summarize(args):
         console.print("Summaries extract decisions, open questions, and key quotes")
         console.print("from each conversation. Powers the 8 prosthetic tools.\n")
         console.print("To enable, add this to your config.toml:")
-        console.print('  \[summarizer]')
+        console.print('  [summarizer]')
         console.print('  enabled = true')
         console.print('  provider = "anthropic"  # or "openai"')
         console.print(f'  api_key_env = "ANTHROPIC_API_KEY"\n')
@@ -584,10 +940,10 @@ def cmd_dashboard(args):
         console.print("\n[yellow]Dashboard not yet available.[/yellow]")
         console.print("The dashboard is coming in v0.2.0.\n")
         console.print("For now, use the CLI commands:")
-        console.print("  brain-mcp init --full    Import everything")
-        console.print("  brain-mcp setup claude   Connect to Claude")
-        console.print("  brain-mcp doctor         Health check")
-        console.print("  brain-mcp status         Quick status\n")
+        console.print("  brain-mcp setup             One-command setup")
+        console.print("  brain-mcp setup claude      Connect to Claude")
+        console.print("  brain-mcp doctor            Health check")
+        console.print("  brain-mcp status            Quick status\n")
 
 
 def cmd_sync(args):
@@ -621,6 +977,16 @@ def main():
 
     sub = parser.add_subparsers(dest="command")
 
+    # setup — unified wizard or per-client
+    p_setup = sub.add_parser("setup", help="Setup wizard (or configure a specific MCP client)")
+    p_setup.add_argument(
+        "client",
+        nargs="?",
+        default=None,
+        choices=["claude", "claude-desktop", "desktop", "claude-code", "code", "cursor", "windsurf"],
+        help="Specific client to configure (omit for guided wizard)",
+    )
+
     # init
     p_init = sub.add_parser("init", help="Discover sources and create config")
     p_init.add_argument("--full", action="store_true", help="Also ingest and embed")
@@ -640,10 +1006,6 @@ def main():
 
     # serve
     sub.add_parser("serve", help="Start the MCP server")
-
-    # setup
-    p_setup = sub.add_parser("setup", help="Auto-configure an MCP client")
-    p_setup.add_argument("client", choices=["claude", "claude-desktop", "desktop", "claude-code", "code", "cursor", "windsurf"])
 
     # doctor
     sub.add_parser("doctor", help="Health check")
@@ -684,8 +1046,13 @@ def main():
     if args.command in commands:
         commands[args.command](args)
     elif args.command is None:
-        # No subcommand → open dashboard (dashboard-first UX)
-        cmd_dashboard(args)
+        # No subcommand: smart status if configured, setup wizard if not
+        if _has_config():
+            _smart_status()
+        else:
+            # Run setup wizard
+            args.client = None
+            cmd_setup(args)
     else:
         parser.print_help()
 

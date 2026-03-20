@@ -20,6 +20,86 @@ _SUMMARIES_HINT = (
     "stages, open questions, and decisions: `brain-mcp summarize`_"
 )
 
+# Map domain names to broader search terms for raw conversation fallback
+_DOMAIN_KEYWORDS = {
+    "ai-dev": "AI machine learning LLM model GPT Claude agent",
+    "backend-dev": "backend server API database endpoint REST GraphQL",
+    "frontend-dev": "frontend React Next.js CSS HTML UI component",
+    "data-engineering": "data pipeline ETL parquet database SQL",
+    "devops": "deploy Docker CI CD infrastructure server",
+    "database": "database SQL Postgres Supabase query table",
+    "python": "Python pip poetry virtualenv package module",
+    "web-scraping": "scrape crawl fetch parse HTML extract",
+    "automation": "automate script cron schedule pipeline",
+    "prompt-engineering": "prompt system instructions context token",
+    "documentation": "docs README documentation guide reference",
+    "business-strategy": "business strategy revenue pricing market",
+    "career": "career job resume interview hiring",
+    "finance": "finance budget cost revenue expense",
+    "personal": "personal life family health",
+    "health": "health sleep exercise medication ADHD",
+    "education": "learn study course tutorial",
+    "torah": "Torah parsha halacha shiur",
+    "cognitive-architecture": "cognitive ADHD monotropic hyperfocus executive function",
+    "wotc": "WOTC tax credit employment",
+    "mobile-dev": "mobile iOS Android app Swift",
+    "ai-strategy": "AI strategy adoption enterprise",
+    "ai-image": "image generation diffusion stable Dall-E",
+}
+
+
+def _expand_domain_search(domain: str) -> str:
+    """Expand a domain name into broader search keywords."""
+    # Try exact domain keywords first
+    if domain in _DOMAIN_KEYWORDS:
+        return _DOMAIN_KEYWORDS[domain]
+    # Fall back to splitting the domain name
+    return domain.replace("-", " ").replace("_", " ")
+
+
+def _domain_fallback_search(con, domain: str, limit: int):
+    """Search for domain-related conversations using expanded keywords."""
+    # First try exact domain name
+    pattern = f"%{domain}%"
+    rows = con.execute("""
+        SELECT conversation_title, content, created, source
+        FROM conversations
+        WHERE (content ILIKE ? OR conversation_title ILIKE ?)
+          AND role = 'user'
+        ORDER BY created DESC
+        LIMIT ?
+    """, [pattern, pattern, limit * 3]).fetchall()
+
+    if rows:
+        return rows
+
+    # Expand to related keywords
+    keywords = _expand_domain_search(domain)
+    for kw in keywords.split():
+        if len(kw) < 3:
+            continue
+        kw_pattern = f"%{kw}%"
+        kw_rows = con.execute("""
+            SELECT conversation_title, content, created, source
+            FROM conversations
+            WHERE (content ILIKE ? OR conversation_title ILIKE ?)
+              AND role = 'user'
+            ORDER BY created DESC
+            LIMIT ?
+        """, [kw_pattern, kw_pattern, limit]).fetchall()
+        rows.extend(kw_rows)
+
+    # Deduplicate by content
+    seen = set()
+    unique = []
+    for r in rows:
+        key = (r[1] or "")[:100]
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    return unique[:limit * 3]
+
 
 def register(mcp):
     """Register prosthetic tools with the MCP server."""
@@ -129,18 +209,10 @@ def register(mcp):
         except FileNotFoundError:
             return "No conversation data found. Run the ingest pipeline first."
 
-        pattern = f"%{domain}%"
-        rows = con.execute("""
-            SELECT conversation_title, content, created, source
-            FROM conversations
-            WHERE (content ILIKE ? OR conversation_title ILIKE ?)
-              AND role = 'user'
-            ORDER BY created DESC
-            LIMIT ?
-        """, [pattern, pattern, limit * 3]).fetchall()
+        rows = _domain_fallback_search(con, domain, limit)
 
         if not rows:
-            return f"No conversations found matching domain: {domain}"
+            return f"No conversations found matching domain: {domain}. Try a broader search with `semantic_search` or `search_conversations`."
 
         questions = [r for r in rows if r[1] and "?" in r[1]]
         titles = list(dict.fromkeys(r[0] for r in rows if r[0]))
@@ -362,17 +434,25 @@ def register(mcp):
         except FileNotFoundError:
             return "No conversation data found. Run the ingest pipeline first."
 
-        pattern = f"%{domain}%"
-        rows = con.execute("""
-            SELECT conversation_title, content, created, source, role
-            FROM conversations
-            WHERE (content ILIKE ? OR conversation_title ILIKE ?)
-            ORDER BY created DESC
-            LIMIT ?
-        """, [pattern, pattern, summary_count * 10]).fetchall()
+        # Context recovery needs role column, so do a custom search with role included
+        keywords = _expand_domain_search(domain)
+        all_keywords = [domain] + [kw for kw in keywords.split() if len(kw) >= 3]
+        rows = []
+        for kw in all_keywords:
+            kw_pattern = f"%{kw}%"
+            kw_rows = con.execute("""
+                SELECT conversation_title, content, created, source, role
+                FROM conversations
+                WHERE (content ILIKE ? OR conversation_title ILIKE ?)
+                ORDER BY created DESC
+                LIMIT ?
+            """, [kw_pattern, kw_pattern, summary_count * 10]).fetchall()
+            if kw_rows:
+                rows = kw_rows
+                break
 
         if not rows:
-            return f"No conversations found matching domain: {domain}"
+            return f"No conversations found matching domain: {domain}. Try a broader search with `semantic_search` or `search_conversations`."
 
         # Also pull semantic matches for richer context
         semantic_matches = []
@@ -507,18 +587,27 @@ def register(mcp):
         except FileNotFoundError:
             return "No conversation data found. Run the ingest pipeline first."
 
-        pattern = f"%{domain}%"
-        rows = con.execute("""
-            SELECT year, month, source, COUNT(*) as msgs,
-                   SUM(CASE WHEN has_question = 1 AND role = 'user' THEN 1 ELSE 0 END) as questions
-            FROM conversations
-            WHERE content ILIKE ? OR conversation_title ILIKE ?
-            GROUP BY year, month, source
-            ORDER BY year, month
-        """, [pattern, pattern]).fetchall()
+        # Use expanded keywords for broader matching
+        keywords = _expand_domain_search(domain)
+        all_keywords = [domain] + [kw for kw in keywords.split() if len(kw) >= 3]
+        
+        rows = []
+        for kw in all_keywords:
+            kw_pattern = f"%{kw}%"
+            kw_rows = con.execute("""
+                SELECT year, month, source, COUNT(*) as msgs,
+                       SUM(CASE WHEN has_question = 1 AND role = 'user' THEN 1 ELSE 0 END) as questions
+                FROM conversations
+                WHERE content ILIKE ? OR conversation_title ILIKE ?
+                GROUP BY year, month, source
+                ORDER BY year, month
+            """, [kw_pattern, kw_pattern]).fetchall()
+            if kw_rows:
+                rows = kw_rows
+                break
 
         if not rows:
-            return f"No conversations found matching domain: {domain}"
+            return f"No conversations found matching domain: {domain}. Try a broader search with `semantic_search` or `search_conversations`."
 
         total_msgs = sum(r[3] for r in rows)
         total_qs = sum(r[4] for r in rows)
@@ -804,17 +893,34 @@ def register(mcp):
             return "No conversation data found. Run the ingest pipeline first."
 
         if domain:
-            pattern = f"%{domain}%"
-            stats = con.execute("""
-                SELECT COUNT(*) as msgs,
-                       SUM(CASE WHEN has_question = 1 AND role = 'user' THEN 1 ELSE 0 END) as questions,
-                       COUNT(DISTINCT source) as sources,
-                       COUNT(DISTINCT conversation_title) as convos,
-                       MIN(created) as first_seen,
-                       MAX(created) as last_seen
-                FROM conversations
-                WHERE content ILIKE ? OR conversation_title ILIKE ?
-            """, [pattern, pattern]).fetchone()
+            # Use expanded keywords for broader matching
+            keywords = _expand_domain_search(domain)
+            all_keywords = [domain] + [kw for kw in keywords.split() if len(kw) >= 3]
+            
+            stats = None
+            matched_pattern = None
+            for kw in all_keywords:
+                kw_pattern = f"%{kw}%"
+                kw_stats = con.execute("""
+                    SELECT COUNT(*) as msgs,
+                           SUM(CASE WHEN has_question = 1 AND role = 'user' THEN 1 ELSE 0 END) as questions,
+                           COUNT(DISTINCT source) as sources,
+                           COUNT(DISTINCT conversation_title) as convos,
+                           MIN(created) as first_seen,
+                           MAX(created) as last_seen
+                    FROM conversations
+                    WHERE content ILIKE ? OR conversation_title ILIKE ?
+                """, [kw_pattern, kw_pattern]).fetchone()
+                if kw_stats and kw_stats[0] > 0:
+                    stats = kw_stats
+                    matched_pattern = kw_pattern
+                    break
+            
+            if not stats or stats[0] == 0:
+                matched_pattern = f"%{domain}%"
+                stats = (0, 0, 0, 0, None, None)
+
+            pattern = matched_pattern or f"%{domain}%"
 
             month_rows = con.execute("""
                 SELECT year, month, COUNT(*) as msgs

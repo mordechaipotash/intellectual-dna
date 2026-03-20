@@ -91,9 +91,9 @@ brain-mcp setup
 Configure specific clients:
 
 ```bash
-brain-mcp setup --client claude     # Claude Desktop + Code
-brain-mcp setup --client cursor     # Cursor
-brain-mcp setup --client windsurf   # Windsurf
+brain-mcp setup claude     # Claude Desktop + Code
+brain-mcp setup cursor     # Cursor
+brain-mcp setup windsurf   # Windsurf
 ```
 
 </details>
