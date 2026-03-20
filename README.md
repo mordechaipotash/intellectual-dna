@@ -254,7 +254,7 @@ You can also sync manually: `brain-mcp sync`
 ## Requirements
 
 - Python 3.11+
-- macOS (Apple Silicon recommended), Linux, or WSL
+- macOS, Linux, or Windows
 
 ---
 

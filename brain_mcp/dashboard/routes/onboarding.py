@@ -139,17 +139,18 @@ _DISCOVER_MODULES = {
 _WELL_KNOWN_PATHS = [
     ("claude-code", "Claude Code", Path.home() / ".claude" / "projects", "*.jsonl"),
     ("clawdbot", "Clawdbot", Path.home() / ".clawdbot" / "agents", "*.jsonl"),
-    (
-        "claude-desktop",
-        "Claude Desktop",
-        Path.home()
-        / "Library"
-        / "Application Support"
-        / "Claude"
-        / "chat_conversations",
-        "*.jsonl",
-    ),
 ]
+
+# Add Claude Desktop with platform-aware path
+try:
+    from brain_mcp.platform import claude_desktop_conversations
+    _WELL_KNOWN.append(
+        ("claude-desktop", "Claude Desktop", claude_desktop_conversations(), "*.jsonl")
+    )
+except Exception:
+    _WELL_KNOWN.append(
+        ("claude-desktop", "Claude Desktop", Path.home() / "Library" / "Application Support" / "Claude" / "chat_conversations", "*.jsonl")
+    )
 
 
 def _discover_sources() -> list[dict]:
@@ -305,8 +306,13 @@ async def auto_configure(request: Request):
     config = _get_mcp_config_json()
 
     # Target config file paths
+    try:
+        from brain_mcp.platform import claude_desktop_config
+        _desktop_cfg = claude_desktop_config()
+    except Exception:
+        _desktop_cfg = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     targets = {
-        "claude-desktop": Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+        "claude-desktop": _desktop_cfg,
         "claude-code": Path.home() / ".claude" / "mcp.json",
         "cursor": Path.home() / ".cursor" / "mcp.json",
     }

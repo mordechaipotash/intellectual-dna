@@ -6,7 +6,9 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "brain-mcp"
+from brain_mcp.platform import app_data_dir, config_dir as _platform_config_dir, claude_desktop_config, claude_desktop_conversations, cursor_data_dir, cursor_vscdb_paths
+
+DEFAULT_CONFIG_DIR = _platform_config_dir()
 DEFAULT_CONFIG_PATH_TOML = DEFAULT_CONFIG_DIR / "config.toml"
 DEFAULT_CONFIG_PATH_YAML = DEFAULT_CONFIG_DIR / "brain.yaml"
 # Prefer TOML if it exists, fall back to YAML
@@ -29,14 +31,9 @@ def discover_sources():
 
     checks = [
         ("Claude Code", "claude-code", Path.home() / ".claude" / "projects", "jsonl"),
-        ("Claude Desktop", "claude-desktop", Path.home() / "Library" / "Application Support" / "Claude" / "chat_conversations", "jsonl"),
+        ("Claude Desktop", "claude-desktop", claude_desktop_conversations(), "jsonl"),
         ("Clawdbot", "clawdbot", Path.home() / ".clawdbot" / "agents", "jsonl"),
     ]
-
-    # Also check Linux/Windows Claude Desktop path
-    import platform
-    if platform.system() != "Darwin":
-        checks[1] = ("Claude Desktop", "claude-desktop", Path.home() / ".config" / "Claude" / "chat_conversations", "jsonl")
 
     console.print("\n[bold]Discovering AI conversations...[/bold]\n")
 
@@ -85,12 +82,8 @@ def discover_sources():
     if cursor_path.exists():
         # Count Cursor data sources
         cursor_count = 0
-        for vscdb_rel in [
-            "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
-            "Library/Application Support/Cursor/User/globalStorage/cursor.vscdb",
-            ".config/Cursor/User/globalStorage/state.vscdb",
-        ]:
-            if (Path.home() / vscdb_rel).exists():
+        for vscdb_path in cursor_vscdb_paths():
+            if vscdb_path.exists():
                 cursor_count += 1
         # Also check agent transcripts
         for proj_dir in (Path.home() / ".cursor" / "projects").glob("*"):
@@ -172,15 +165,10 @@ def create_config(sources, config_dir=None):
 
 def _auto_detect_mcp_clients():
     """Auto-detect installed MCP clients. Returns list of (label, config_path) tuples."""
-    import platform
-    is_mac = platform.system() == "Darwin"
     clients = []
 
     # Claude Desktop
-    if is_mac:
-        desktop_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    else:
-        desktop_path = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    desktop_path = claude_desktop_config()
     if desktop_path.parent.exists():
         clients.append(("Claude Desktop", desktop_path))
 
@@ -614,19 +602,13 @@ def _setup_single_client(args):
     client = args.client
 
     # Determine config file path
-    import platform
-    is_mac = platform.system() == "Darwin"
-
     if client in ("claude-desktop", "desktop"):
-        if is_mac:
-            config_file = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-        else:
-            config_file = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        config_file = claude_desktop_config()
     elif client in ("claude-code", "code"):
         config_file = Path.home() / ".claude.json"
     elif client == "claude":
         # Auto-detect: set up BOTH if they exist, else whichever is found
-        desktop = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json" if is_mac else Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        desktop = claude_desktop_config()
         code = Path.home() / ".claude.json"
 
         targets = []
@@ -742,11 +724,8 @@ def cmd_doctor(args):
         console.print(f"      -> Run: brain-mcp summarize (requires ANTHROPIC_API_KEY)")
 
     # MCP client configs
-    import platform
-    is_mac = platform.system() == "Darwin"
-    desktop_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json" if is_mac else Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
     for name, path in [
-        ("Claude Desktop", desktop_path),
+        ("Claude Desktop", claude_desktop_config()),
         ("Claude Code", Path.home() / ".claude.json"),
         ("Cursor", Path.home() / ".cursor" / "mcp.json"),
         ("Windsurf", Path.home() / ".windsurf" / "mcp.json"),

@@ -166,11 +166,15 @@ async def discover_sources(request: Request):
     templates = request.app.state.templates
     discovered = []
 
+    try:
+        from brain_mcp.platform import claude_desktop_conversations
+        _desktop_convos = claude_desktop_conversations()
+    except Exception:
+        _desktop_convos = Path.home() / "Library" / "Application Support" / "Claude" / "chat_conversations"
     checks = [
         ("Claude Code", "claude-code", Path.home() / ".claude" / "projects"),
         ("Clawdbot", "clawdbot", Path.home() / ".clawdbot" / "agents"),
-        ("Claude Desktop", "claude-desktop",
-         Path.home() / "Library" / "Application Support" / "Claude" / "chat_conversations"),
+        ("Claude Desktop", "claude-desktop", _desktop_convos),
     ]
 
     for name, src_type, path in checks:

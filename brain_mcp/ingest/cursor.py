@@ -24,12 +24,10 @@ from .schema import make_record, finalize_conversation
 
 # ─── Discovery paths ────────────────────────────────────────────────────────
 
-VSCDB_PATHS = [
-    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
-    "~/Library/Application Support/Cursor/User/globalStorage/cursor.vscdb",
-    "~/.config/Cursor/User/globalStorage/state.vscdb",
-    "~/.config/Cursor/User/globalStorage/cursor.vscdb",
-]
+from brain_mcp.platform import cursor_vscdb_paths as _cursor_vscdb_paths
+
+# Platform-aware paths (macOS, Linux, Windows)
+VSCDB_PATHS = [str(p) for p in _cursor_vscdb_paths()]
 
 AGENT_TRANSCRIPT_GLOBS = [
     "~/.cursor/projects/*/agent-transcripts/*.jsonl",

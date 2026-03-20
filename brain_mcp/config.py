@@ -10,7 +10,7 @@ Config search order:
   2. BRAIN_CONFIG env var
   3. BRAIN_HOME env var
   4. ./config.toml → ./brain.yaml (cwd)
-  5. ~/.config/brain-mcp/config.toml → ~/.config/brain-mcp/brain.yaml
+  5. Platform config dir (see brain_mcp.platform)
 """
 
 import os
@@ -214,8 +214,9 @@ def _find_config_path(config_path: Optional[str] = None) -> Optional[Path]:
         if Path(name).exists():
             return Path(name)
 
-    # Check ~/.config/brain-mcp/
-    config_dir = Path.home() / ".config" / "brain-mcp"
+    # Check platform config dir
+    from brain_mcp.platform import config_dir as _platform_config_dir
+    config_dir = _platform_config_dir()
     for name in ("config.toml", "brain.yaml"):
         p = config_dir / name
         if p.exists():
