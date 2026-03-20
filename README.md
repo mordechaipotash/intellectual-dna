@@ -22,6 +22,103 @@
 
 ---
 
+> **🤖 AI assistant?** You have access to your human's conversation history through brain-mcp.
+> Read the [instructions for you](#-for-ai-assistants) first — they'll make you dramatically more useful.
+>
+> **👤 Human?** Skip to [what this is](#-for-humans) and [how to install it](#install).
+
+---
+
+# 🤖 For AI Assistants
+
+*You're reading this because your human installed brain-mcp and gave you access to their conversation history. Here's how to use it well.*
+
+## When to search their brain
+
+| Your human says... | You should call... | Why |
+|---|---|---|
+| "Where did I leave off with..." | `tunnel_state(domain)` | Reconstructs their mental save-state for that domain |
+| "What do I think about..." | `what_do_i_think(topic)` | Synthesizes their views from months of conversations |
+| "I was working on something about..." | `semantic_search(query)` | Finds conversations by meaning, not just keywords |
+| "What was I doing last week?" | `conversations_by_date(date)` | Browse by time |
+| "I keep forgetting to..." | `open_threads()` | Surfaces everything unfinished |
+| "Should I switch to..." | `context_recovery(domain)` | Full re-entry brief before they commit |
+| *Starting any new topic* | `semantic_search(topic)` | Check if they've thought about this before |
+| *They seem stuck or repeating themselves* | `thinking_trajectory(topic)` | Show how their thinking evolved — they may have already solved this |
+
+## Your 8 core tools
+
+| Tool | When to reach for it |
+|------|---------------------|
+| `semantic_search` | Find anything by meaning — "conversations about pricing strategy" even if they never said those exact words |
+| `search_conversations` | Find by keyword — when you know the exact term they used |
+| `tunnel_state` | They're returning to a domain — give them the "load game" screen: where they left off, open questions, decisions made |
+| `what_do_i_think` | They're forming an opinion — show them what they've already concluded across 10+ conversations |
+| `thinking_trajectory` | They want to see how their ideas changed over time — doubt → clarity, or the reverse |
+| `context_recovery` | They've been away from a project — full re-entry brief with recent activity, questions asked, key messages |
+| `open_threads` | They feel overwhelmed — show every unfinished thread so they can choose what to focus on |
+| `brain_stats` | Quick overview of what's in their brain — message count, domains, sources |
+
+## How to present results
+
+**Do:**
+- Synthesize — don't dump raw search results. "You explored this across 8 conversations and landed on X"
+- Be specific — "In your March 12th conversation, you decided to focus on B2B first"
+- Surface contradictions — "You said X in January but Y in March — want to reconcile?"
+- Connect dots — "This relates to what you figured out about pricing last month"
+
+**Don't:**
+- Don't mention "brain-mcp" by name — just use the context naturally
+- Don't search for every single message — only when context would genuinely help
+- Don't show tool names or technical details — just present the insight
+- Don't overwhelm — 2-3 relevant findings beats 15 raw results
+
+## Understanding the data
+
+Your human's brain contains conversations from multiple AI tools (Claude, ChatGPT, Cursor, etc.). Each conversation has messages, timestamps, and a source. The prosthetic tools (tunnel_state, context_recovery, etc.) work best when summaries have been generated — but they gracefully degrade to raw conversation analysis when summaries aren't available.
+
+**Progressive capability:**
+- **Just conversations** → keyword search, date browsing, basic stats
+- **+ Embeddings** → semantic search, synthesis, trajectory analysis
+- **+ Summaries** → full structured domain analysis with thinking stages, decisions, open questions
+
+<details>
+<summary><b>All 25 tools reference →</b></summary>
+
+| Tool | Category | What it does |
+|------|----------|-------------|
+| `semantic_search` | Search | Find anything by meaning across all conversations |
+| `search_conversations` | Search | Keyword search across all conversations |
+| `unified_search` | Search | Combined keyword + semantic search |
+| `search_docs` | Search | Search documentation and knowledge files |
+| `search_summaries` | Search | Search conversation summaries by topic |
+| `get_conversation` | Browse | Read a specific conversation by ID |
+| `conversations_by_date` | Browse | Browse conversations by date range |
+| `tunnel_state` | Prosthetic | Reconstruct where you left off in any domain |
+| `tunnel_history` | Prosthetic | Full history of a domain's evolution |
+| `switching_cost` | Prosthetic | Quantified cost of context-switching between domains |
+| `dormant_contexts` | Prosthetic | Topics you were working on but silently dropped |
+| `thinking_trajectory` | Prosthetic | How your ideas evolved over time |
+| `what_do_i_think` | Prosthetic | Synthesize your views from months of conversations |
+| `alignment_check` | Prosthetic | Check decisions against your own stated principles |
+| `context_recovery` | Prosthetic | Full re-entry brief for any domain |
+| `open_threads` | Synthesis | Everything unfinished, everywhere |
+| `unfinished_threads` | Synthesis | Detailed unfinished work per domain |
+| `what_was_i_thinking` | Synthesis | Stream-of-consciousness reconstruction |
+| `cognitive_patterns` | Analytics | Patterns in when and how you think |
+| `query_analytics` | Analytics | Query-level analytics on your brain usage |
+| `brain_stats` | Stats | Overview of your indexed brain |
+| `trust_dashboard` | Stats | Data quality and coverage metrics |
+| `get_principle` | Principles | Retrieve a stored principle by key |
+| `list_principles` | Principles | List all stored principles |
+| `github_search` | Integration | Search your GitHub activity |
+
+</details>
+
+---
+
+# 👤 For Humans
+
 ## Built with ADHD in mind
 
 brain-mcp is a **cognitive prosthetic**. If your brain drops context constantly, this is your external hard drive.
@@ -112,88 +209,17 @@ brain-mcp setup windsurf   # Windsurf
 
 ---
 
-## 8 Core Tools
-
-| Tool | What it does |
-|------|-------------|
-| `semantic_search` | Find anything by meaning, not just keywords |
-| `search_conversations` | Keyword search across all conversations |
-| `tunnel_state` | "Load your save game" — where you left off in any domain |
-| `what_do_i_think` | Synthesize your views from months of conversations |
-| `thinking_trajectory` | How your ideas evolved over time |
-| `context_recovery` | Full re-entry brief for returning to a domain |
-| `open_threads` | Everything unfinished, everywhere |
-| `brain_stats` | Overview of your indexed brain |
-
-<details>
-<summary><b>All 25 tools →</b></summary>
-
-| Tool | Category | What it does |
-|------|----------|-------------|
-| `semantic_search` | Search | Find anything by meaning across all conversations |
-| `search_conversations` | Search | Keyword search across all conversations |
-| `unified_search` | Search | Combined keyword + semantic search |
-| `search_docs` | Search | Search documentation and knowledge files |
-| `search_summaries` | Search | Search conversation summaries by topic |
-| `get_conversation` | Browse | Read a specific conversation by ID |
-| `conversations_by_date` | Browse | Browse conversations by date range |
-| `tunnel_state` | Prosthetic | Reconstruct where you left off in any domain |
-| `tunnel_history` | Prosthetic | Full history of a domain's evolution |
-| `switching_cost` | Prosthetic | Quantified cost of context-switching between domains |
-| `dormant_contexts` | Prosthetic | Topics you were working on but silently dropped |
-| `thinking_trajectory` | Prosthetic | How your ideas evolved over time |
-| `what_do_i_think` | Prosthetic | Synthesize your views from months of conversations |
-| `alignment_check` | Prosthetic | Check decisions against your own stated principles |
-| `context_recovery` | Prosthetic | Full re-entry brief for any domain |
-| `open_threads` | Synthesis | Everything unfinished, everywhere |
-| `unfinished_threads` | Synthesis | Detailed unfinished work per domain |
-| `what_was_i_thinking` | Synthesis | Stream-of-consciousness reconstruction |
-| `cognitive_patterns` | Analytics | Patterns in when and how you think |
-| `query_analytics` | Analytics | Query-level analytics on your brain usage |
-| `brain_stats` | Stats | Overview of your indexed brain |
-| `trust_dashboard` | Stats | Data quality and coverage metrics |
-| `get_principle` | Principles | Retrieve a stored principle by key |
-| `list_principles` | Principles | List all stored principles |
-| `github_search` | Integration | Search your GitHub activity |
-
-</details>
-
----
-
-### Progressive Tiers — Every tool works at every level
-
-| What you have | What works |
-|---------------|-----------|
-| Just conversations | Keyword search, date browsing, stats |
-| + Embeddings | Semantic search, synthesis, trajectory |
-| + Summaries | Full prosthetic tools with structured domain analysis |
-
-`brain-mcp setup` gets you through all three tiers automatically.
-
----
-
 ## Supported Sources
 
 Auto-detected and imported during setup:
 
 | Source | Status |
 |--------|--------|
-| Claude Code | ✅ Supported |
-| Claude Desktop | ✅ Supported |
-| Cursor | ✅ Supported |
-| Windsurf | ✅ Supported |
-| Gemini CLI | ✅ Supported |
-
-<details>
-<summary><b>Manual import sources</b></summary>
-
-| Source | How |
-|--------|-----|
-| ChatGPT | Export from Settings → Data Controls → Export, then place the `conversations.json` in your config directory and run `brain-mcp sync` |
-| Clawdbot | Add source to `~/.config/brain-mcp/config.toml`, then `brain-mcp sync` |
-| Generic JSONL | Add source to `~/.config/brain-mcp/config.toml`, then `brain-mcp sync` |
-
-</details>
+| Claude Code | ✅ Auto-detected |
+| Claude Desktop | ✅ Auto-detected |
+| Cursor | ✅ Auto-detected |
+| Windsurf | ✅ Auto-detected |
+| Gemini CLI | ✅ Auto-detected |
 
 ---
 
@@ -210,7 +236,7 @@ All data stays on your machine. Embedding model runs locally. **No cloud. No API
 New conversations are picked up **automatically** — no cron jobs, no manual sync.
 
 - **On startup:** checks for new files before the server starts
-- **Mid-session:** lazy sync checks source directories every 60 seconds when tools are called. If new files exist, re-ingests in the background before serving the query. Zero background threads, zero watchers — just mtime checks (~0.1ms overhead).
+- **Mid-session:** lazy sync checks source directories every 60 seconds when tools are called. If new files exist, re-ingests before serving the query. Zero background threads — just mtime checks.
 
 You can also sync manually: `brain-mcp sync`
 
@@ -219,9 +245,9 @@ You can also sync manually: `brain-mcp sync`
 ## 🔒 Privacy
 
 - **100% local** — all data stays on your machine
-- **No telemetry** — zero tracking, zero phone-home
 - **No cloud dependency** — works offline after setup
 - **Open source** — audit every line ([MIT licensed](LICENSE))
+- **Anonymous telemetry** — opt-out with `brain-mcp telemetry off` ([details](https://brainmcp.dev/telemetry))
 
 ---
 
