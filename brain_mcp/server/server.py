@@ -75,12 +75,12 @@ def _register_principles(mcp):
     def list_principles() -> str:
         """
         List your configured principles.
-        Principles are loaded from the YAML/JSON file specified in brain.yaml.
+        Principles are loaded from the YAML/JSON file specified in config.toml.
         """
         principles = get_principles()
 
         if not principles:
-            return "No principles configured. Add a principles file to brain.yaml."
+            return "No principles configured. Add a principles file to config.toml."
 
         # Support both flat list and nested dict formats
         section = principles.get("principles", principles)
@@ -176,7 +176,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="brain-mcp server")
-    parser.add_argument("--config", help="Path to brain.yaml config file")
+    parser.add_argument("--config", help="Path to config.toml config file")
     parser.add_argument("--no-prewarm", action="store_true", help="Skip model pre-warming")
     args = parser.parse_args()
 

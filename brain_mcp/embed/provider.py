@@ -179,11 +179,21 @@ def _detect_available_provider() -> str:
     except ImportError:
         pass
 
-    raise ImportError(
-        "No embedding backend found. Install one of:\n"
-        "  pip install 'brain-mcp[embed]'           # fastembed (recommended, ~107MB)\n"
-        "  pip install 'brain-mcp[embed-torch]'     # sentence-transformers (legacy, ~1.3GB)\n"
-    )
+    # Detect if running in a pipx environment
+    import os
+    in_pipx = "pipx" in (os.environ.get("VIRTUAL_ENV", "") + sys.prefix)
+    if in_pipx:
+        raise ImportError(
+            "No embedding backend found. Install one of:\n"
+            "  pipx inject brain-mcp fastembed              # recommended, ~107MB\n"
+            "  pipx inject brain-mcp sentence-transformers  # legacy, ~1.3GB\n"
+        )
+    else:
+        raise ImportError(
+            "No embedding backend found. Install one of:\n"
+            "  pip install 'brain-mcp[embed]'           # fastembed (recommended, ~107MB)\n"
+            "  pip install 'brain-mcp[embed-torch]'     # sentence-transformers (legacy, ~1.3GB)\n"
+        )
 
 
 def get_provider(

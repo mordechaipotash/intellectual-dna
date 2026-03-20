@@ -7,7 +7,7 @@ LLM (Anthropic, OpenAI, or Ollama), and writes results to parquet + LanceDB.
 
 Summaries power the prosthetic tools (tunnel_state, context_recovery, etc.)
 
-All settings come from brain.yaml via config.py.
+All settings come from config.toml via config.py.
 
 Usage:
     python -m summarize.summarize                # Summarize new conversations

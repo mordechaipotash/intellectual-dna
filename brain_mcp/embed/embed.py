@@ -9,7 +9,7 @@ re-embed, rebuild, and stats modes.
 Uses fastembed via the EmbeddingProvider ABC for lightweight,
 PyTorch-free embedding.
 
-All paths and model settings come from brain.yaml via config.py.
+All paths and model settings come from config.toml via config.py.
 
 Usage:
     python -m embed.embed           # Incremental (default)

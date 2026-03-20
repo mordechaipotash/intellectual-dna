@@ -78,7 +78,30 @@ def discover_sources():
     # Check Cursor
     cursor_path = Path.home() / ".cursor"
     if cursor_path.exists():
-        console.print(f"   [yellow]!![/yellow]  {'Cursor':<16} found but ingester not yet supported")
+        # Count Cursor data sources
+        cursor_count = 0
+        for vscdb_rel in [
+            "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+            "Library/Application Support/Cursor/User/globalStorage/cursor.vscdb",
+            ".config/Cursor/User/globalStorage/state.vscdb",
+        ]:
+            if (Path.home() / vscdb_rel).exists():
+                cursor_count += 1
+        # Also check agent transcripts
+        for proj_dir in (Path.home() / ".cursor" / "projects").glob("*"):
+            transcripts = proj_dir / "agent-transcripts"
+            if transcripts.exists():
+                cursor_count += len(list(transcripts.glob("*.jsonl")))
+
+        if cursor_count > 0:
+            console.print(f"   [green]found[/green] {'Cursor':<16} {cursor_count:>6} sources     {cursor_path}")
+            sources.append({
+                "type": "cursor",
+                "path": str(cursor_path),
+                "name": "Cursor",
+            })
+        else:
+            console.print(f"   [dim]--  {'Cursor':<16} installed but no data found[/dim]")
 
     # Check Windsurf
     windsurf_path = Path.home() / ".windsurf"
@@ -150,9 +173,12 @@ def cmd_init(args):
     sources = discover_sources()
 
     if not sources:
-        console.print("[yellow]No conversation sources found.[/yellow]")
-        console.print("You can manually add sources to brain.yaml later.")
-        console.print("Supported: Claude Code JSONL, ChatGPT export, Clawdbot, generic JSONL")
+        console.print("[yellow]No conversation sources found.[/yellow]\n")
+        console.print("💡 [bold]ChatGPT[/bold]: Go to Settings → Data Controls → Export in ChatGPT,")
+        console.print("   download the zip, extract it to ~/Downloads, then run [cyan]brain-mcp init[/cyan] again.\n")
+        console.print("💡 [bold]Claude Code[/bold]: Sessions are auto-detected from ~/.claude/projects/\n")
+        console.print("You can also manually add sources to config.toml.")
+        console.print("Supported: Claude Code, ChatGPT export, Claude Desktop, Clawdbot, Cursor, Gemini CLI")
 
     config_path = create_config(sources)
     total = sum(1 for s in sources)
@@ -164,10 +190,14 @@ def cmd_init(args):
         try:
             cmd_embed(args)
         except Exception as e:
-            if "fastembed" in str(e) or "No module named" in str(e):
-                console.print("\n[yellow]Embedding skipped — fastembed not installed.[/yellow]")
+            if "fastembed" in str(e) or "No module named" in str(e) or "No embedding backend" in str(e):
+                console.print("\n[yellow]Embedding skipped — no embedding backend installed.[/yellow]")
                 console.print("   Keyword search works now. For semantic search:")
-                console.print("   pip install 'brain-mcp[embed]'")
+                import os as _os
+                if "pipx" in (_os.environ.get("VIRTUAL_ENV", "") + sys.prefix):
+                    console.print("   pipx inject brain-mcp fastembed")
+                else:
+                    console.print("   pip install 'brain-mcp[embed]'")
                 console.print("   brain-mcp embed")
             else:
                 raise
@@ -240,10 +270,24 @@ def cmd_embed(args):
 
 def cmd_serve(args):
     """Start the MCP server."""
-    from brain_mcp.config import load_config, set_config
+    import sys as _sys
+    from brain_mcp.config import load_config, set_config, get_config
     config_path = getattr(args, 'config', None) or DEFAULT_CONFIG_PATH
     if config_path and Path(config_path).exists():
         set_config(load_config(str(config_path)))
+
+    # Show startup message on stderr (stdout is for MCP stdio transport)
+    cfg = get_config()
+    msg_count = 0
+    if cfg.parquet_path.exists():
+        try:
+            import duckdb
+            con = duckdb.connect()
+            msg_count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{cfg.parquet_path}')").fetchone()[0]
+            con.close()
+        except Exception:
+            pass
+    print(f"brain-mcp MCP server running on stdio. Messages: {msg_count:,}.", file=_sys.stderr, flush=True)
 
     from brain_mcp.server.server import create_server
     mcp = create_server()
@@ -462,8 +506,15 @@ def cmd_status(args):
 
 def cmd_version(args):
     """Print version."""
-    from brain_mcp import __version__
-    print(f"brain-mcp {__version__}")
+    try:
+        from importlib.metadata import version as _get_version
+        ver = _get_version("brain-mcp")
+    except Exception:
+        try:
+            from brain_mcp import __version__ as ver
+        except Exception:
+            ver = "unknown"
+    print(f"brain-mcp {ver}")
 
 
 def cmd_summarize(args):
@@ -482,11 +533,11 @@ def cmd_summarize(args):
         console.print("\n[yellow]Summarization is not configured.[/yellow]\n")
         console.print("Summaries extract decisions, open questions, and key quotes")
         console.print("from each conversation. Powers the 8 prosthetic tools.\n")
-        console.print("To enable, edit your config file and set:")
-        console.print("  summarizer:")
-        console.print("    enabled: true")
-        console.print("    provider: anthropic  # or openai")
-        console.print(f"    api_key_env: ANTHROPIC_API_KEY\n")
+        console.print("To enable, add this to your config.toml:")
+        console.print('  \[summarizer]')
+        console.print('  enabled = true')
+        console.print('  provider = "anthropic"  # or "openai"')
+        console.print(f'  api_key_env = "ANTHROPIC_API_KEY"\n')
         console.print("Or configure via the dashboard:")
         console.print("  brain-mcp dashboard\n")
         console.print("[dim]Without summaries, all search + basic prosthetic tools still work.[/dim]")
@@ -551,11 +602,22 @@ def cmd_sync(args):
 
 
 def main():
+    # Import version - try importlib.metadata first (works in pipx), then __init__
+    try:
+        from importlib.metadata import version as _get_version
+        _version = _get_version("brain-mcp")
+    except Exception:
+        try:
+            from brain_mcp import __version__ as _version
+        except Exception:
+            _version = "unknown"
+
     parser = argparse.ArgumentParser(
         prog="brain-mcp",
         description="Turn your AI conversations into a searchable second brain",
     )
-    parser.add_argument("--config", help="Path to brain.yaml config file")
+    parser.add_argument("--version", action="version", version=f"brain-mcp {_version}")
+    parser.add_argument("--config", help="Path to config.toml config file")
 
     sub = parser.add_subparsers(dest="command")
 

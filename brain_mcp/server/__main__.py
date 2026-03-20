@@ -3,7 +3,7 @@ brain-mcp — Server entry point for `python -m brain_mcp.server`.
 
 Allows running the MCP server with:
     python -m brain_mcp.server
-    python -m brain_mcp.server --config /path/to/brain.yaml
+    python -m brain_mcp.server --config /path/to/config.toml
     python -m brain_mcp.server --no-prewarm
 """
 
