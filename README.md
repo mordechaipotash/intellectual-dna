@@ -1,6 +1,6 @@
 # 🧠 brain-mcp
 
-**You've had thousands of AI conversations. You can't search any of them.**
+**Your AI has amnesia. You don't have to.**
 
 *Other AI memory tools remember facts. brain-mcp remembers how you think.*
 
@@ -22,6 +22,16 @@
 
 ---
 
+## Built with ADHD in mind
+
+brain-mcp is a **cognitive prosthetic**. If your brain drops context constantly, this is your external hard drive.
+
+Neurotypical productivity tools assume you can hold everything in working memory. brain-mcp assumes you can't — and builds the scaffolding so you don't have to.
+
+Context switch without fear. Go deep without mourning abandoned threads. Come back to any project and pick up exactly where you left off.
+
+---
+
 ## The Problem
 
 You had a breakthrough at 2am last Tuesday. You laid out a whole framework in a conversation with Claude. It was brilliant.
@@ -29,6 +39,8 @@ You had a breakthrough at 2am last Tuesday. You laid out a whole framework in a 
 You can't find it. You can't even remember which conversation it was in.
 
 **Every week, millions of people pour their best thinking into AI conversations — and lose all of it.** ChatGPT's "memory" stores a few fun facts. None of them let you *search your own thinking*.
+
+The real cost isn't forgetting. It's the **anxiety of knowing you'll forget.** Every time you go deep on a problem, part of your brain is mourning the other threads you're abandoning. brain-mcp eliminates that. Your threads survive. You can go deeper.
 
 **Without brain-mcp:**
 > *"I had this great idea about the business plan last month... which conversation was it... was it ChatGPT or Claude..."*
@@ -55,41 +67,36 @@ Open questions: 12 | Decisions made: 8
 
 12 milliseconds to reconstruct the mental state that took weeks to build. That's real data, not a mockup.
 
-> *Built with ADHD in mind. If your brain drops context constantly, this is your external hard drive.*
-
 ---
 
 ## Install
 
 ```bash
-pipx install brain-mcp          # recommended
-brain-mcp init                   # discover your conversations
-brain-mcp ingest                 # import them (fast, no GPU)
-brain-mcp setup claude           # auto-configure Claude Desktop + Code
+pipx install brain-mcp
+brain-mcp setup
 ```
 
-Restart Claude. **25 tools available.** Keyword search works immediately.
+That's it. `setup` discovers your conversations, imports them, creates embeddings, and configures your AI tools — all automatically.
 
-```bash
-# Optional: enable semantic search
-pipx inject brain-mcp fastembed  # ~107MB, no GPU needed
-brain-mcp embed
-```
+Restart your AI client. Say **"use brain"** in any conversation. Done.
 
 <details>
-<summary>pip install / other clients</summary>
+<summary>pip install / manual options</summary>
 
 ```bash
 pip install brain-mcp
-brain-mcp init && brain-mcp ingest
-brain-mcp setup claude           # Claude Desktop + Code
-brain-mcp setup cursor           # Cursor
-brain-mcp setup windsurf         # Windsurf
+brain-mcp setup
+```
+
+Configure specific clients:
+
+```bash
+brain-mcp setup --client claude     # Claude Desktop + Code
+brain-mcp setup --client cursor     # Cursor
+brain-mcp setup --client windsurf   # Windsurf
 ```
 
 </details>
-
-After setup, just say **"use brain"** in any conversation. Your AI searches your full thinking history when relevant.
 
 ---
 
@@ -97,32 +104,63 @@ After setup, just say **"use brain"** in any conversation. Your AI searches your
 
 | Ask your AI | What happens |
 |-------------|-------------|
-| *"What did I figure out about sleep last month?"* | Finds insights across 12 conversations you forgot you had |
 | *"Where did I leave off with the business plan?"* | Reconstructs your context — open questions, decisions, next steps |
-| *"How has my thinking about career changes evolved?"* | Tracks your opinion trajectory from doubt → clarity |
-| *"What would it cost to switch focus right now?"* | Quantifies what you'd abandon — open threads, unfinished thinking |
 | *"What do I actually think about AI?"* | Synthesizes YOUR views from 31 past conversations into one answer |
+| *"What did I figure out about sleep last month?"* | Finds insights across 12 conversations you forgot you had |
+| *"How has my thinking about career changes evolved?"* | Tracks your opinion trajectory from doubt → clarity |
+| *"What's unfinished right now?"* | Shows every open thread across every domain |
 
 ---
 
-## 25 Tools (What Makes This Different)
-
-Most MCP memory tools are key-value stores. brain-mcp has **8 cognitive prosthetic tools** that no other memory system offers:
+## 8 Core Tools
 
 | Tool | What it does |
 |------|-------------|
-| `tunnel_state` | "Load your save game" — reconstructs where you were in any domain |
-| `switching_cost` | Quantified cost of switching between domains (built for ADHD) |
-| `dormant_contexts` | Topics you were working on but silently dropped |
-| `thinking_trajectory` | How your ideas evolved over time, not just the latest version |
-| `what_do_i_think` | Synthesizes your actual views from months of conversations |
-| `alignment_check` | Checks decisions against your own stated principles |
+| `semantic_search` | Find anything by meaning, not just keywords |
+| `search_conversations` | Keyword search across all conversations |
+| `tunnel_state` | "Load your save game" — where you left off in any domain |
+| `what_do_i_think` | Synthesize your views from months of conversations |
+| `thinking_trajectory` | How your ideas evolved over time |
+| `context_recovery` | Full re-entry brief for returning to a domain |
 | `open_threads` | Everything unfinished, everywhere |
-| `context_recovery` | Full re-entry brief for any domain |
+| `brain_stats` | Overview of your indexed brain |
 
-Plus **17 more**: semantic search, keyword search, conversation browsing, stats, synthesis, analytics, and more. [Full tool reference →](https://brainmcp.dev/docs/tools)
+<details>
+<summary><b>All 25 tools →</b></summary>
 
-### Progressive Tiers — Every tool works at every level:
+| Tool | Category | What it does |
+|------|----------|-------------|
+| `semantic_search` | Search | Find anything by meaning across all conversations |
+| `search_conversations` | Search | Keyword search across all conversations |
+| `unified_search` | Search | Combined keyword + semantic search |
+| `search_docs` | Search | Search documentation and knowledge files |
+| `search_summaries` | Search | Search conversation summaries by topic |
+| `get_conversation` | Browse | Read a specific conversation by ID |
+| `conversations_by_date` | Browse | Browse conversations by date range |
+| `tunnel_state` | Prosthetic | Reconstruct where you left off in any domain |
+| `tunnel_history` | Prosthetic | Full history of a domain's evolution |
+| `switching_cost` | Prosthetic | Quantified cost of context-switching between domains |
+| `dormant_contexts` | Prosthetic | Topics you were working on but silently dropped |
+| `thinking_trajectory` | Prosthetic | How your ideas evolved over time |
+| `what_do_i_think` | Prosthetic | Synthesize your views from months of conversations |
+| `alignment_check` | Prosthetic | Check decisions against your own stated principles |
+| `context_recovery` | Prosthetic | Full re-entry brief for any domain |
+| `open_threads` | Synthesis | Everything unfinished, everywhere |
+| `unfinished_threads` | Synthesis | Detailed unfinished work per domain |
+| `what_was_i_thinking` | Synthesis | Stream-of-consciousness reconstruction |
+| `cognitive_patterns` | Analytics | Patterns in when and how you think |
+| `query_analytics` | Analytics | Query-level analytics on your brain usage |
+| `brain_stats` | Stats | Overview of your indexed brain |
+| `trust_dashboard` | Stats | Data quality and coverage metrics |
+| `get_principle` | Principles | Retrieve a stored principle by key |
+| `list_principles` | Principles | List all stored principles |
+| `github_search` | Integration | Search your GitHub activity |
+
+</details>
+
+---
+
+### Progressive Tiers — Every tool works at every level
 
 | What you have | What works |
 |---------------|-----------|
@@ -130,27 +168,40 @@ Plus **17 more**: semantic search, keyword search, conversation browsing, stats,
 | + Embeddings | Semantic search, synthesis, trajectory |
 | + Summaries | Full prosthetic tools with structured domain analysis |
 
+`brain-mcp setup` gets you through all three tiers automatically.
+
 ---
 
 ## Supported Sources
 
-| Source | Auto-detected | Status |
-|--------|:---:|--------|
-| Claude Code | ✅ | Supported |
-| Claude Desktop | ✅ | Supported |
-| ChatGPT | ✅ | Supported |
-| Cursor | ✅ | Supported |
-| Clawdbot | ✅ | Supported |
-| Gemini CLI | ✅ | Supported |
-| Generic JSONL | Manual | Supported |
+Auto-detected and imported during setup:
+
+| Source | Status |
+|--------|--------|
+| Claude Code | ✅ Supported |
+| Claude Desktop | ✅ Supported |
+| Cursor | ✅ Supported |
+| Windsurf | ✅ Supported |
+| Gemini CLI | ✅ Supported |
+
+<details>
+<summary><b>Manual import sources</b></summary>
+
+| Source | How |
+|--------|-----|
+| ChatGPT | Export from Settings → Data Controls → Export, then `brain-mcp ingest --source chatgpt --path export.zip` |
+| Clawdbot | `brain-mcp ingest --source clawdbot --path /path/to/sessions/` |
+| Generic JSONL | `brain-mcp ingest --source generic --path conversations.jsonl` |
+
+</details>
 
 ---
 
 ## How It Works
 
-1. **You already have the data.** Claude Code sessions, ChatGPT exports — they're files on your machine.
-2. **brain-mcp indexes them.** Keyword search works instantly. Add embeddings for semantic search.
-3. **Your AI gets 25 new tools.** Ask Claude "where did I leave off?" and it searches your brain. 12ms.
+1. **Install** — 30 seconds, one command
+2. **It finds your conversations automatically** — Claude Code sessions, Cursor history, desktop app logs. They're already on your machine.
+3. **Your AI searches your brain** — 12ms. Ask Claude "where did I leave off?" and it reconstructs your mental state from months of conversations.
 
 All data stays on your machine. Embedding model runs locally. **No cloud. No API costs. No accounts.**
 
