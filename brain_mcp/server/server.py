@@ -51,6 +51,9 @@ def create_server(config_path: str = None) -> FastMCP:
     # Register principles tools (if principles are configured)
     _register_principles(mcp)
 
+    # ── Telemetry: wrap tool calls for latency + usage tracking ──
+    _register_tool_telemetry(mcp)
+
     # Register resources
     @mcp.resource("brain://stats")
     def resource_stats() -> str:
@@ -66,6 +69,48 @@ def create_server(config_path: str = None) -> FastMCP:
             return "Brain stats unavailable"
 
     return mcp
+
+
+def _register_tool_telemetry(mcp):
+    """Wrap tool handlers to track latency and usage via telemetry.
+
+    Patches FastMCP's internal tool handler to add timing around each call.
+    Falls back silently if the internal API changes.
+    """
+    try:
+        import time as _time
+        from brain_mcp.telemetry import track_tool, track_error
+
+        # Get reference to the internal MCP server's call_tool handler
+        original_call_tool = mcp._mcp_server.request_handlers.get("tools/call")
+        if not original_call_tool:
+            return
+
+        async def tracked_call_tool(request):
+            tool_name = request.params.name if hasattr(request, 'params') else "unknown"
+            start = _time.monotonic()
+            try:
+                result = await original_call_tool(request)
+                elapsed_ms = (_time.monotonic() - start) * 1000
+                # Check if result is empty
+                text = ""
+                if hasattr(result, 'content') and result.content:
+                    text = getattr(result.content[0], 'text', '')
+                empty = (
+                    "No conversations found" in text[:60]
+                    or "not found" in text[:60].lower()
+                    or len(text) < 30
+                )
+                track_tool(tool_name, elapsed_ms, empty=empty)
+                return result
+            except Exception as e:
+                elapsed_ms = (_time.monotonic() - start) * 1000
+                track_error(tool_name, type(e).__name__)
+                raise
+
+        mcp._mcp_server.request_handlers["tools/call"] = tracked_call_tool
+    except Exception:
+        pass  # never break the server for telemetry
 
 
 def _register_principles(mcp):

@@ -4,7 +4,6 @@
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "brain-mcp"
@@ -392,6 +391,7 @@ def cmd_serve(args):
     """Start the MCP server."""
     import sys as _sys
     from brain_mcp.config import load_config, set_config, get_config
+    from brain_mcp.telemetry import track
     config_path = getattr(args, 'config', None) or DEFAULT_CONFIG_PATH
     if config_path and Path(config_path).exists():
         set_config(load_config(str(config_path)))
@@ -415,6 +415,7 @@ def cmd_serve(args):
         except Exception:
             pass
     stderr_print(f"brain-mcp MCP server running on stdio. Messages: {msg_count:,}.")
+    track("serve_started", {"messages": msg_count})
 
     from brain_mcp.server.server import create_server
     mcp = create_server()
@@ -475,7 +476,11 @@ def _setup_wizard(args):
     import os
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    from brain_mcp.telemetry import track, maybe_show_notice
     console = Console()
+
+    maybe_show_notice()
+    track("setup_started")
 
     console.print("\n[bold]🧠 Setting up brain-mcp...[/bold]\n")
 
@@ -485,7 +490,7 @@ def _setup_wizard(args):
     if not sources:
         console.print("[yellow]No conversation sources found.[/yellow]\n")
         console.print("💡 Start using Claude Code or Claude Desktop, then re-run [cyan]brain-mcp setup[/cyan]")
-        console.print("💡 Or export from ChatGPT: [cyan]brain-mcp import chatgpt[/cyan]\n")
+        console.print("💡 Or add sources manually to [cyan]~/.config/brain-mcp/config.toml[/cyan] and run [cyan]brain-mcp sync[/cyan]\n")
         return
 
     # ── Step 2: Create config ──
@@ -592,6 +597,13 @@ def _setup_wizard(args):
     console.print()
     console.print("   Open Claude and ask: [italic]'what was I working on last week?'[/italic]")
     console.print()
+
+    track("setup_completed", {
+        "messages": total_messages,
+        "embeddings": total_embeddings,
+        "sources": len(sources),
+        "clients": configured_names,
+    })
 
 
 def _setup_single_client(args):
@@ -1027,7 +1039,33 @@ def main():
     p_dash.add_argument("--port", type=int, default=8742, help="Port (default: 8742)")
     p_dash.add_argument("--no-open", action="store_true", help="Don't open browser")
 
+    # telemetry
+    p_telem = sub.add_parser("telemetry", help="Manage anonymous usage telemetry")
+    p_telem.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["on", "off", "status"],
+        help="Enable, disable, or check telemetry status",
+    )
+
     args = parser.parse_args()
+
+    def cmd_telemetry(args):
+        from brain_mcp.telemetry import is_enabled, set_enabled
+        action = getattr(args, 'action', 'status')
+        if action == "on":
+            set_enabled(True)
+            print("✅ Telemetry enabled. Anonymous usage data will be collected.")
+        elif action == "off":
+            set_enabled(False)
+            print("🔇 Telemetry disabled. No data will be collected.")
+        else:
+            status = "enabled" if is_enabled() else "disabled"
+            print(f"Telemetry: {status}")
+            print(f"  Disable: brain-mcp telemetry off")
+            print(f"  Enable:  brain-mcp telemetry on")
+            print(f"  Details: https://brainmcp.dev/telemetry")
 
     commands = {
         "init": cmd_init,
@@ -1041,6 +1079,7 @@ def main():
         "version": cmd_version,
         "summarize": cmd_summarize,
         "dashboard": cmd_dashboard,
+        "telemetry": cmd_telemetry,
     }
 
     if args.command in commands:

@@ -189,9 +189,9 @@ Auto-detected and imported during setup:
 
 | Source | How |
 |--------|-----|
-| ChatGPT | Export from Settings → Data Controls → Export, then `brain-mcp ingest --source chatgpt --path export.zip` |
-| Clawdbot | `brain-mcp ingest --source clawdbot --path /path/to/sessions/` |
-| Generic JSONL | `brain-mcp ingest --source generic --path conversations.jsonl` |
+| ChatGPT | Export from Settings → Data Controls → Export, then place the `conversations.json` in your config directory and run `brain-mcp sync` |
+| Clawdbot | Add source to `~/.config/brain-mcp/config.toml`, then `brain-mcp sync` |
+| Generic JSONL | Add source to `~/.config/brain-mcp/config.toml`, then `brain-mcp sync` |
 
 </details>
 
