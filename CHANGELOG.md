@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.0.0-beta.1] — 2026-05-28
+
+**v1.0 BETA.** Major rewrite: brain-mcp is now a thin MCP server wrapping the
+[Bob protocol](https://apiiam.com/bob/init.0). Storage moved from cloud Postgres
+(SHELET ref-impl) to local parquets under `~/.bob/`.
+
+Pre-release. To install: `pip install brain-mcp --pre`. To stay on v0.4.0:
+`pip install brain-mcp` (default — no `--pre` flag).
+
+### Changed
+- **Storage**: `~/.bob/turns.parquet` (Bob protocol output) replaces hosted Supabase.
+- **Tools**: 9 read-only tools (`bob_health`, `bob_search`, `bob_recent`,
+  `bob_conversations_by_date`, `bob_tunnel_state`, `bob_what_do_i_think`,
+  `bob_thinking_trajectory`, `bob_open_threads`, `bob_dropped`) replace the
+  25 SHELET-skill surface.
+- **Dependencies**: only `mcp` + `duckdb`. v0.x deps (lancedb, pandas, pyarrow,
+  fastembed, anthropic, fastapi, jinja2) moved to optional `legacy` extras.
+- **Pitch**: "memory belongs to the rememberer is architecture, not morality."
+
+### Removed
+- Cloud Supabase connection (no more anon keys / DB URLs in env).
+- Semantic search (v1.0 is keyword-only; embeddings are a separate future protocol).
+- brainmcp.dev hosted dashboard dependency.
+
+### Compatibility
+- v0.x users staying on `brain-mcp==0.4.0` are unaffected. No auto-upgrade.
+- v0.x env vars (`BRAIN_MCP_DB_URL`, `BRAIN_MCP_API_KEY`) are now ignored —
+  remove them when upgrading.
+- v0.x CLI (`brain_mcp.cli:main`) is no longer the script entry point. To
+  use it: `python -m brain_mcp.cli` (legacy import path preserved).
+
+### Upgrade path
+1. Install Bob (the protocol that produces `~/.bob/turns.parquet`): paste
+   `https://apiiam.com/bob/init.0` into any MCP-aware LLM session.
+2. `pip install brain-mcp --pre` (or `uv tool install brain-mcp --pre`).
+3. Register: `{"brain": {"command": "uvx", "args": ["brain-mcp", "--pre"]}}` in
+   `~/.claude/mcp.json` (or your client's MCP config).
+
+---
+
+
 All notable changes to Brain MCP will be documented in this file.
 
 ## [0.4.0] — 2026-04-24 — SHELET reference implementation

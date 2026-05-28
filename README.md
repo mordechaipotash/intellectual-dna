@@ -1,275 +1,186 @@
-# 🧠 brain-mcp
+# brain-mcp v1.0
 
-**Your AI has amnesia. You don't have to.**
+**Transportable AI memory, now shipping as a distributable.**
 
-*Other AI memory tools remember facts. brain-mcp remembers how you think.*
+*Your AI conversation history, queryable from any MCP-aware LLM, stored entirely on your machine.*
 
 [![Stars](https://img.shields.io/github/stars/mordechaipotash/brain-mcp?style=flat-square)](https://github.com/mordechaipotash/brain-mcp/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/brain-mcp?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/brain-mcp/)
-[![Downloads](https://img.shields.io/pypi/dm/brain-mcp?style=flat-square&label=installs)](https://pypi.org/project/brain-mcp/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-brainmcp.dev-cyan?style=flat-square)](https://brainmcp.dev)
-
-<p align="center">
-  <img src="assets/demo-autoplay.gif" alt="brain-mcp Demo" width="640"/>
-</p>
-
-<p align="center"><i>⬆️ Auto-playing preview — <a href="https://github.com/user-attachments/assets/90220a62-2d4e-4dfe-aaa3-2a04172b47b8">click here for full video with audio</a></i></p>
-
-<p align="center">
-  <b><a href="https://brainmcp.dev">📚 Docs</a></b> · <b><a href="https://brainmcp.dev/docs/quickstart">🚀 Quickstart</a></b> · <b><a href="https://brainmcp.dev/faq">❓ FAQ</a></b>
-</p>
 
 ---
 
-> **🤖 AI assistant?** You have access to your human's conversation history through brain-mcp.
-> Read the [instructions for you](#-for-ai-assistants) first — they'll make you dramatically more useful.
->
-> **👤 Human?** Skip to [what this is](#-for-humans) and [how to install it](#install).
+## What changed in v1.0
+
+brain-mcp v0.x was a hosted SHELET reference implementation pointed at a Supabase substrate. **v1.0 is a thin MCP server that wraps the [Bob protocol](https://apiiam.com/bob/init.0).** Storage moved from cloud Postgres to local parquets under `~/.bob/`. The protocol is free; brain-mcp is one implementation; a paid `bob managed *` tier (cloud sync, recipes) is opt-in and lives in a separate package.
+
+The 53 of you who starred v0.x: thank you. v1.0 is the version we were always going to build — *memory belongs to the rememberer is the architecture that makes the product possible*, not just the pitch.
+
+### What v1.0 inherits
+- The 8-tool surface (`bob_search`, `bob_recent`, `bob_what_do_i_think`, `bob_tunnel_state`, `bob_thinking_trajectory`, `bob_open_threads`, `bob_conversations_by_date`, `bob_health`).
+- The "AI assistant readme" frame — your LLM reads this README and gets dramatically more useful.
+- The cite-or-die discipline — every claim from brain-mcp surfaces a `conv_id`, `ts`, and `src` so the LLM can show its work.
+
+### What v1.0 drops
+- Cloud database connection (no Supabase, no anon keys).
+- Semantic search (no embeddings yet; v1.0 is keyword-only — embeddings are a separate future protocol).
+- The `brainmcp.dev` hosted demo dashboard (the protocol is the spec now, not a website).
 
 ---
 
-# 🤖 For AI Assistants
+## Install (2 minutes)
 
-*You're reading this because your human installed brain-mcp and gave you access to their conversation history. Here's how to use it well.*
+### Step 1 — Install Bob
 
-## When to search their brain
+In any LLM session that can fetch URLs (Claude Code, Claude.ai with web search, ChatGPT with browse, Cursor, etc.), paste:
+
+```
+Run this: https://apiiam.com/bob/init.0
+```
+
+The LLM fetches the XML protocol, runs duckdb against `~/.claude/projects/`, `~/.codex/sessions/`, your Cursor sqlite, and any ChatGPT / Claude.ai exports you've downloaded. Writes `~/.bob/turns.parquet` (~5 min, ~30MB for an active user). No passwords, no signups, no network calls beyond the initial spec fetch.
+
+Optional — promote L0 → L1 (noise filter):
+
+```
+Run this: https://apiiam.com/bob/init.1
+```
+
+Strips system-reminders, command outputs, build-log pastes. Writes `~/.bob/turns.l1.parquet` + audit trail.
+
+### Step 2 — Install brain-mcp
+
+```bash
+uvx brain-mcp                    # ephemeral, no install
+# OR
+uv tool install brain-mcp        # persistent CLI
+# OR
+pipx install brain-mcp
+```
+
+### Step 3 — Register with your LLM client
+
+**Claude Code / Claude Desktop** — add to `~/.claude/mcp.json` (or via `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "brain": {
+      "command": "uvx",
+      "args": ["brain-mcp"]
+    }
+  }
+}
+```
+
+**Cursor / Continue / other MCP clients** — same shape, see their MCP docs.
+
+That's it. Open a new LLM session and ask: *"what was I working on last week?"*
+
+---
+
+## 🤖 For AI Assistants
+
+*You're reading this because your human installed brain-mcp and gave you access to their AI conversation history. Here's how to use it well.*
+
+### When to call which tool
 
 | Your human says... | You should call... | Why |
 |---|---|---|
-| "Where did I leave off with..." | `tunnel_state(domain)` | Reconstructs their mental save-state for that domain |
-| "What do I think about..." | `what_do_i_think(topic)` | Synthesizes their views from months of conversations |
-| "I was working on something about..." | `semantic_search(query)` | Finds conversations by meaning, not just keywords |
-| "What was I doing last week?" | `conversations_by_date(date)` | Browse by time |
-| "I keep forgetting to..." | `open_threads()` | Surfaces everything unfinished |
-| "Should I switch to..." | `context_recovery(domain)` | Full re-entry brief before they commit |
-| *Starting any new topic* | `semantic_search(topic)` | Check if they've thought about this before |
-| *They seem stuck or repeating themselves* | `thinking_trajectory(topic)` | Show how their thinking evolved — they may have already solved this |
+| "Where did I leave off with..." | `bob_tunnel_state(domain)` | Reconstructs their mental save-state for that domain — most recent activity across the top conversations |
+| "What do I think about..." | `bob_what_do_i_think(topic)` | Filters to *user-role* turns only, deduplicated. Their voice, not the AI's reframe. |
+| "I was working on something about..." | `bob_search(query)` | Substring match across both roles. Returns up to 12 most recent matches. |
+| "What was I doing yesterday / last week?" | `bob_recent(hours=24)` or `bob_conversations_by_date(date)` | Time-based browse. |
+| "I keep forgetting to..." | `bob_open_threads()` | Surfaces turns with TODO / `?` / blocked / waiting-on. |
+| "How did my thinking on X evolve?" | `bob_thinking_trajectory(topic)` | User-turns in *ascending* time order. Read left-to-right. |
+| *Starting any new topic* | `bob_search(topic)` | Check if they've thought about it before. |
+| *Uncertain what's available* | `bob_health()` | Reports active layer (L1 if filtered, else L0), per-source counts, manifest. |
 
-## Your 8 core tools
+### What brain-mcp does NOT do
+- **No semantic / embedding search.** v1.0 is keyword-only. Don't claim "I searched semantically" — claim "I searched the keyword X across their conversations." For sentences that should match semantically, try multiple keyword angles.
+- **No cross-LLM identity stitching.** A conversation in ChatGPT and one in Claude on the same topic are two `conv_id`s. Surface both; don't merge.
+- **No future-looking inference.** The data is what they typed. Don't speculate "they're probably about to X" — say "in conversation Y on date Z they said Q."
+- **No write-back.** brain-mcp is strictly read-only on the parquets.
 
-| Tool | When to reach for it |
-|------|---------------------|
-| `semantic_search` | Find anything by meaning — "conversations about pricing strategy" even if they never said those exact words |
-| `search_conversations` | Find by keyword — when you know the exact term they used |
-| `tunnel_state` | They're returning to a domain — give them the "load game" screen: where they left off, open questions, decisions made |
-| `what_do_i_think` | They're forming an opinion — show them what they've already concluded across 10+ conversations |
-| `thinking_trajectory` | They want to see how their ideas changed over time — doubt → clarity, or the reverse |
-| `context_recovery` | They've been away from a project — full re-entry brief with recent activity, questions asked, key messages |
-| `open_threads` | They feel overwhelmed — show every unfinished thread so they can choose what to focus on |
-| `brain_stats` | Quick overview of what's in their brain — message count, domains, sources |
-
-## How to present results
-
-**Do:**
-- Synthesize — don't dump raw search results. "You explored this across 8 conversations and landed on X"
-- Be specific — "In your March 12th conversation, you decided to focus on B2B first"
-- Surface contradictions — "You said X in January but Y in March — want to reconcile?"
-- Connect dots — "This relates to what you figured out about pricing last month"
-
-**Don't:**
-- Don't mention "brain-mcp" by name — just use the context naturally
-- Don't search for every single message — only when context would genuinely help
-- Don't show tool names or technical details — just present the insight
-- Don't overwhelm — 2-3 relevant findings beats 15 raw results
-
-## Understanding the data
-
-Your human's brain contains conversations from multiple AI tools (Claude, ChatGPT, Cursor, etc.). Each conversation has messages, timestamps, and a source. The prosthetic tools (tunnel_state, context_recovery, etc.) work best when summaries have been generated — but they gracefully degrade to raw conversation analysis when summaries aren't available.
-
-**Progressive capability:**
-- **Just conversations** → keyword search, date browsing, basic stats
-- **+ Embeddings** → semantic search, synthesis, trajectory analysis
-- **+ Summaries** → full structured domain analysis with thinking stages, decisions, open questions
-
-<details>
-<summary><b>All 25 tools reference →</b></summary>
-
-| Tool | Category | What it does |
-|------|----------|-------------|
-| `semantic_search` | Search | Find anything by meaning across all conversations |
-| `search_conversations` | Search | Keyword search across all conversations |
-| `unified_search` | Search | Combined keyword + semantic search |
-| `search_docs` | Search | Search documentation and knowledge files |
-| `search_summaries` | Search | Search conversation summaries by topic |
-| `get_conversation` | Browse | Read a specific conversation by ID |
-| `conversations_by_date` | Browse | Browse conversations by date range |
-| `tunnel_state` | Prosthetic | Reconstruct where you left off in any domain |
-| `tunnel_history` | Prosthetic | Full history of a domain's evolution |
-| `switching_cost` | Prosthetic | Quantified cost of context-switching between domains |
-| `dormant_contexts` | Prosthetic | Topics you were working on but silently dropped |
-| `thinking_trajectory` | Prosthetic | How your ideas evolved over time |
-| `what_do_i_think` | Prosthetic | Synthesize your views from months of conversations |
-| `alignment_check` | Prosthetic | Check decisions against your own stated principles |
-| `context_recovery` | Prosthetic | Full re-entry brief for any domain |
-| `open_threads` | Synthesis | Everything unfinished, everywhere |
-| `unfinished_threads` | Synthesis | Detailed unfinished work per domain |
-| `what_was_i_thinking` | Synthesis | Stream-of-consciousness reconstruction |
-| `cognitive_patterns` | Analytics | Patterns in when and how you think |
-| `query_analytics` | Analytics | Query-level analytics on your brain usage |
-| `brain_stats` | Stats | Overview of your indexed brain |
-| `trust_dashboard` | Stats | Data quality and coverage metrics |
-| `get_principle` | Principles | Retrieve a stored principle by key |
-| `list_principles` | Principles | List all stored principles |
-| `github_search` | Integration | Search your GitHub activity |
-
-</details>
+### Cite-or-die discipline
+Every fact you state from brain-mcp must include the `ts`, `src`, and `conv_id` from the row(s) it came from. Don't paraphrase what they said without telling them where you read it. "In your conductor-role-orchestra conversation on 2026-05-23, you wrote: *...*" — not "you believe X."
 
 ---
 
-# 👤 For Humans
+## 👤 For Humans
 
-## Built with ADHD in mind
+### What brain-mcp does
+You've been chatting with AI for months or years across multiple tools (ChatGPT, Claude, Cursor, Codex, Claude Code). Each tool only sees its own slice. **Bob captures all five into one local file. brain-mcp lets any MCP-aware LLM read that file.**
 
-brain-mcp is a **cognitive prosthetic**. If your brain drops context constantly, this is your external hard drive.
+The first time you ask a fresh LLM session *"what was I working on last week?"* and it answers with conversations from three different tools — that's the unlock.
 
-Neurotypical productivity tools assume you can hold everything in working memory. brain-mcp assumes you can't — and builds the scaffolding so you don't have to.
+### What brain-mcp does NOT do
+- **It does not phone home.** brain-mcp opens no network sockets. Your data stays on your machine. (Verify: run `lsof -p <brain-mcp-pid>` while it's serving.)
+- **It does not need an account.** No signup, no API keys.
+- **It does not generate embeddings.** v1.0 is keyword search only. Embeddings are a separate (also local) future protocol.
+- **It does not modify your AI conversation logs.** brain-mcp reads `~/.bob/turns.parquet`, which bob produced from your CC / Codex / Cursor / export files. The original logs are untouched.
 
-Context switch without fear. Go deep without mourning abandoned threads. Come back to any project and pick up exactly where you left off.
+### Storage layout
 
----
-
-## The Problem
-
-You had a breakthrough at 2am last Tuesday. You laid out a whole framework in a conversation with Claude. It was brilliant.
-
-You can't find it. You can't even remember which conversation it was in.
-
-**Every week, millions of people pour their best thinking into AI conversations — and lose all of it.** ChatGPT's "memory" stores a few fun facts. None of them let you *search your own thinking*.
-
-The real cost isn't forgetting. It's the **anxiety of knowing you'll forget.** Every time you go deep on a problem, part of your brain is mourning the other threads you're abandoning. brain-mcp eliminates that. Your threads survive. You can go deeper.
-
-**Without brain-mcp:**
-> *"I had this great idea about the business plan last month... which conversation was it... was it ChatGPT or Claude..."*
-> 30 minutes later: Maybe 60% recovered. If you're lucky.
-
-**With brain-mcp:**
 ```
-> "Where did I leave off with the business strategy?"
-
-🧠 business-strategy — exploring stage
-Open questions: 12 | Decisions made: 8
-
-❓ Top open:
-  - Should I focus on B2B or B2C first?
-  - What pricing model fits the early stage?
-
-✅ Recent decisions:
-  - Target solo developers initially
-  - Open-source core, paid hosting layer
-
-💬 Found across: 15 ChatGPT + 8 Claude + 3 Claude Code conversations
-⏱️ 12ms
+~/.bob/
+├── turns.parquet          ← L0: raw turns from up to 5 sources (init.0 output)
+├── turns.l1.parquet       ← L1: noise-filtered (init.1 output; optional)
+├── turns.l1.dropped.parquet ← L1 audit trail (which turns were filtered, why)
+└── turns.l1.manifest.json ← counts + drop reasons (also optional)
 ```
 
-12 milliseconds to reconstruct the mental state that took weeks to build. That's real data, not a mockup.
+brain-mcp prefers L1 when present, falls back to L0.
+
+### Refresh
+
+Re-run init.0 in any LLM session. It overwrites `~/.bob/turns.parquet` with the latest 30 days. No cron, no daemon — you choose when.
 
 ---
 
-## Install
+## Architecture
 
-```bash
-pipx install brain-mcp
-brain-mcp setup
+- **Protocol:** [apiiam.com/bob/init.0](https://apiiam.com/bob/init.0) (XML, fetched by your LLM)
+- **Storage:** parquet files under `~/.bob/` (or `$BOB_HOME`)
+- **Query engine:** duckdb (in-process, in-memory, read-only against parquets)
+- **MCP server:** Python + FastMCP, stdio transport
+- **Optional service tier:** `bob managed *` subcommands for cloud sync (separate package, opt-in, lives at a different binary — not bundled here)
+
+```
+Your LLM (Claude / ChatGPT / Cursor / ...)
+        ↓ MCP stdio
+brain-mcp (this package)
+        ↓ duckdb read_parquet
+~/.bob/turns.l1.parquet  (or L0 if no L1)
+        ↑ written by
+init.0 / init.1 (Bob protocol, run in an LLM session)
+        ↑ reads
+your raw AI conversation logs (CC / Codex / Cursor / exports)
 ```
 
-That's it. `setup` discovers your conversations, imports them, creates embeddings, and configures your AI tools — all automatically.
-
-Restart your AI client. Say **"use brain"** in any conversation. Done.
-
-<details>
-<summary>pip install / manual options</summary>
-
-```bash
-pip install brain-mcp
-brain-mcp setup
-```
-
-Configure specific clients:
-
-```bash
-brain-mcp setup claude     # Claude Desktop + Code
-brain-mcp setup cursor     # Cursor
-brain-mcp setup windsurf   # Windsurf
-```
-
-</details>
+No box in this diagram makes a network call after install except `init.0` fetching the protocol URL once.
 
 ---
 
-## What You Can Do
+## v0.x compatibility
 
-| Ask your AI | What happens |
-|-------------|-------------|
-| *"Where did I leave off with the business plan?"* | Reconstructs your context — open questions, decisions, next steps |
-| *"What do I actually think about AI?"* | Synthesizes YOUR views from 31 past conversations into one answer |
-| *"What did I figure out about sleep last month?"* | Finds insights across 12 conversations you forgot you had |
-| *"How has my thinking about career changes evolved?"* | Tracks your opinion trajectory from doubt → clarity |
-| *"What's unfinished right now?"* | Shows every open thread across every domain |
+If you registered the v0.x `brain-mcp` against a Supabase substrate: that config no longer works. v1.0 reads local parquets only. To migrate:
 
----
+1. Run https://apiiam.com/bob/init.0 to produce `~/.bob/turns.parquet`.
+2. Upgrade: `uv tool upgrade brain-mcp` (or `pipx upgrade brain-mcp`).
+3. Restart your LLM client (it re-spawns the MCP server with the new code).
 
-## Supported Sources
-
-Auto-detected and imported during setup:
-
-| Source | Status |
-|--------|--------|
-| Claude Code | ✅ Auto-detected |
-| Claude Desktop | ✅ Auto-detected |
-| Cursor | ✅ Auto-detected |
-| Windsurf | ✅ Auto-detected |
-| Gemini CLI | ✅ Auto-detected |
+Your old `BRAIN_MCP_DB_URL` / `BRAIN_MCP_API_KEY` env vars are now ignored. Remove them.
 
 ---
 
-## How It Works
+## License
 
-1. **Install** — 30 seconds, one command
-2. **It finds your conversations automatically** — Claude Code sessions, Cursor history, desktop app logs. They're already on your machine.
-3. **Your AI searches your brain** — 12ms. Ask Claude "where did I leave off?" and it reconstructs your mental state from months of conversations.
+MIT. Use anywhere, including commercially. No warranty.
 
-All data stays on your machine. Embedding model runs locally. **No cloud. No API costs. No accounts.**
+## Links
 
-### Sync
-
-New conversations are picked up **automatically** — no cron jobs, no manual sync.
-
-- **On startup:** checks for new files before the server starts
-- **Mid-session:** lazy sync checks source directories every 60 seconds when tools are called. If new files exist, re-ingests before serving the query. Zero background threads — just mtime checks.
-
-You can also sync manually: `brain-mcp sync`
-
----
-
-## 🔒 Privacy
-
-- **100% local** — all data stays on your machine
-- **No cloud dependency** — works offline after setup
-- **Open source** — audit every line ([MIT licensed](LICENSE))
-- **Anonymous telemetry** — opt-out with `brain-mcp telemetry off` ([details](https://brainmcp.dev/telemetry))
-
----
-
-## Requirements
-
-- Python 3.11+
-- macOS, Linux, or Windows
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions welcome.
-
----
-
-<div align="center">
-
-*Built because losing your train of thought shouldn't mean starting over.*
-
-**[brainmcp.dev](https://brainmcp.dev)** · **[PyPI](https://pypi.org/project/brain-mcp/)** · **[Full Docs](https://brainmcp.dev/docs/quickstart)**
-
-⭐ If this is useful, a star helps others find it.
-
-</div>
+- Protocol: https://apiiam.com/bob/init.0
+- Author: Mordechai Potash — [mordechaipotash.com](https://mordechaipotash.com)
+- Essays on the underlying thesis: [daf.mordechaipotash.com](https://daf.mordechaipotash.com)
+- Issues / discussion: [GitHub](https://github.com/mordechaipotash/brain-mcp/issues)
